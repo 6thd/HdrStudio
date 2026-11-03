@@ -2,7 +2,7 @@ built: 2026-11-03T11:00:00Z
 command: :app:clean assembleDebug assembleRelease  (javac ran on this tree; not an incremental leftover)
 branch: work/v2.2
 git_parent: a1a3c7c891ea01b4a7cbe9fb6d10e914b02634c4
-git_commit: the commit on work/v2.2 that contains this file (reported in the delivery message as full SHA)
+git_commit: f59072e41a811eed2905277e680ed622ba90e11d
 javac: javac 17.0.20.1
 compileSdk: 35
 minSdk: 29
