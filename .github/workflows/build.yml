@@ -1,0 +1,99 @@
+name: Build HDR Studio
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: "Run the desktop shader/AI test harness (slow, ~20 min)"
+        type: boolean
+        default: false
+      verify_model:
+        description: "Compare the bundled AI weights with the official Real-ESRGAN release"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read          # no automatic public releases; APKs are workflow artifacts
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-35 build-tools;35.0.0"
+      - name: Restore release keystore (optional)
+        env:
+          KS_B64: ${{ secrets.HDR_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "HDR_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Signing with the stored release key (stable: updates install over older builds)."
+          else
+            echo "::warning::No HDR_KEYSTORE_BASE64 secret: test APK uses a throw-away debug key; release APK will be unsigned."
+          fi
+      - name: JVM unit tests (colour maths, metadata, scene cuts, HEVC bitstream parser)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg && tools/jvmtests/run.sh
+      - name: Build
+        env:
+          HDR_KEYSTORE_PASSWORD: ${{ secrets.HDR_KEYSTORE_PASSWORD }}
+          HDR_KEY_ALIAS: ${{ secrets.HDR_KEY_ALIAS }}
+          HDR_KEY_PASSWORD: ${{ secrets.HDR_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+      - name: Collect APKs
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/debug/*.apk out/HDR-Studio-test.apk
+          ls app/build/outputs/apk/release/
+          cp app/build/outputs/apk/release/*.apk out/ 2>/dev/null || true
+          sha256sum out/*.apk | tee out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HDR-Studio-apk
+          path: out/
+          retention-days: 30
+
+  verify-model:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_model }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install numpy==2.1.3
+      - run: |
+          curl -fsSL -o general.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+          python3 tools/convert_official_pth.py general.pth official.bin app/src/main/assets/models/srvgg_general_x4v3.bin
+
+  tests:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_tests }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install numpy==2.1.3 ncnn==1.0.20261020
+      - run: |
+          cd tools/harness && npm init -y >/dev/null && npm install playwright@1.48.2 && npx playwright install --with-deps chromium
+      - run: bash tools/harness/run_ci.sh "$RUNNER_TEMP/hdrtest"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harness-report
+          path: |
+            ${{ runner.temp }}/hdrtest/run_*/out/report.json
+            ${{ runner.temp }}/hdrtest/run_*/out/jvm_tests.log
+            ${{ runner.temp }}/hdrtest/run_*/out/png/

@@ -1,0 +1,6 @@
+built: 2026-11-03T03:56:05Z
+javac: javac 21.0.12.1
+sources_sha256: f8ec2d44bec0b92f4e66a3607c9f8ed35a96252e2a8ff274af043946d35a6435  (sha256 of 'sha256sum' over app/src/main, sorted paths)
+classes.dex_sha256: 12e8b2326085f9c04283200b7a736b8e61fd855930f4b0d391301cd3ae26bc23
+apk_sha256: 91e4af524019f3e7d0f77ce0c1b605c18885c4b2ab6b07eb1aca4b39ad60694f
+signing: local test key (NOT the CI release key) - uninstall before installing a CI build

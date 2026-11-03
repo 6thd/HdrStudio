@@ -1,0 +1,568 @@
+package com.mojahed.hdrstudio.ui;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.StatFs;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.VideoView;
+
+import com.mojahed.hdrstudio.ai.SrEngine;
+import com.mojahed.hdrstudio.core.DeviceCaps;
+import com.mojahed.hdrstudio.core.SourceInfo;
+import com.mojahed.hdrstudio.core.SourceProbe;
+import com.mojahed.hdrstudio.encode.Presets;
+import com.mojahed.hdrstudio.gl.Egl;
+import com.mojahed.hdrstudio.gl.GlKit;
+import com.mojahed.hdrstudio.gl.ShaderLoader;
+import com.mojahed.hdrstudio.job.EncodeSelfTest;
+import com.mojahed.hdrstudio.job.ExportJob;
+import com.mojahed.hdrstudio.job.ExportRequest;
+import com.mojahed.hdrstudio.job.ExportService;
+import com.mojahed.hdrstudio.job.JobManager;
+import com.mojahed.hdrstudio.stages.PipelineParams;
+
+import java.util.Locale;
+
+/** Arabic, right-to-left single screen. State that must survive rotation lives in {@link UiState}. */
+public final class MainActivity extends Activity implements JobManager.Listener {
+    private static final int PICK = 42;
+    private final int bg = Color.parseColor("#0E0E10"), card = Color.parseColor("#1B1B1F"), accent = Color.parseColor("#FFD60A"), dim = Color.parseColor("#B8B8C0");
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final UiState st = UiState.get();
+    private SharedPreferences prefs;
+
+    private TextView srcText, devText, selfTestText, aiText, statusText, resultText, etaText, previewNote, storageText;
+    private RadioGroup presetGroup, resGroup, aiScaleGroup, gammaGroup;
+    private Switch aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch;
+    private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
+    private TextView bitrateLabel, posLabel;
+    private Button exportBtn, selfTestBtn, aiTestBtn, previewBtn, clipBtn, openBtn;
+    private ProgressBar progress;
+    private CompareView compare;
+    private VideoView video;
+
+    // ------------------------------------------------------------------ lifecycle
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        buildUi();
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+        if (st.caps == null) {
+            devText.setText("جارٍ فحص قدرات الجهاز…");
+            bg(new Runnable() {
+                @Override public void run() {
+                    ExportJob.cleanupStalePending(getApplicationContext());
+                    DeviceCaps c = DeviceCaps.collect(getApplicationContext());
+                    c.probeGl();
+                    st.caps = c;
+                    ui(new Runnable() { @Override public void run() { refreshAll(); } });
+                }
+            });
+        }
+        refreshAll();
+    }
+
+    @Override protected void onStart() { super.onStart(); JobManager.get().addListener(this); }
+    @Override protected void onStop() { JobManager.get().removeListener(this); super.onStop(); }
+
+    private void bg(Runnable r) { new Thread(r, "ui-worker").start(); }
+    private void ui(Runnable r) { main.post(r); }
+
+    // ------------------------------------------------------------------ UI construction
+    private void buildUi() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(14), dp(14), dp(14), dp(24));
+        root.setBackgroundColor(bg);
+
+        TextView title = text("HDR Studio", 26, accent);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        root.addView(title);
+        root.addView(text("تحسين الفيديو وإخراج HDR10 على الهاتف", 14, dim));
+
+        Button pick = button("اختيار فيديو", true);
+        pick.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("video/*");
+            startActivityForResult(i, PICK);
+        }});
+        root.addView(pick, lp(10));
+
+        LinearLayout c1 = card(root, "المصدر");
+        srcText = text("لم يُختر فيديو", 13, Color.WHITE);
+        c1.addView(srcText);
+
+        LinearLayout c2 = card(root, "فحص الجهاز");
+        devText = text("", 13, Color.WHITE);
+        c2.addView(devText);
+        selfTestText = text("", 13, dim);
+        c2.addView(selfTestText, lp(6));
+        selfTestBtn = button("فحص مسار التصدير (ترميز ← فك ترميز)", false);
+        selfTestBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runSelfTest(); } });
+        c2.addView(selfTestBtn, lp(6));
+
+        LinearLayout c3 = card(root, "الإخراج");
+        presetGroup = radios(c3, new String[]{Presets.HDR10_MASTER.label, Presets.SDR.label, Presets.TIKTOK_HDR.label, Presets.TIKTOK_SDR.label}, prefs.getInt("preset", 0));
+        c3.addView(text("الدقة", 14, Color.WHITE), lp(8));
+        resGroup = radios(c3, new String[]{"تحسين بنفس الدقة", "720p", "1080p", "1440p", "2160p (4K)"}, prefs.getInt("res", 0));
+        bitrateLabel = text("", 13, Color.WHITE);
+        c3.addView(bitrateLabel, lp(8));
+        sBitrate = seek(c3, null, 0, 100, prefs.getInt("bitrate", 50));
+        storageText = text("", 12, dim);
+        c3.addView(storageText);
+        audioSwitch = sw(c3, "الإبقاء على الصوت", prefs.getBoolean("audio", true));
+
+        LinearLayout c4 = card(root, "تحسين الصورة (كل عنصر مستقل)");
+        aiSwitch = sw(c4, "استعادة التفاصيل بالذكاء الاصطناعي (Real-ESRGAN)", prefs.getBoolean("ai", false));
+        aiText = text("حالة النموذج: لم يُفحص", 12, dim);
+        c4.addView(aiText);
+        aiTestBtn = button("فحص نموذج AI على GPU", false);
+        aiTestBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runAiTest(); } });
+        c4.addView(aiTestBtn, lp(4));
+        sAi = seek(c4, "مزج نتيجة AI مع الأصل", 0, 100, prefs.getInt("aiAmt", 70));
+        aiScaleGroup = radios(c4, new String[]{"AI أعلى جودة (بدقة المصدر)", "AI أسرع (بنصف الدقة – يفقد قواماً دقيقاً)"}, prefs.getInt("aiQuality", 0));
+        sDenoise = seek(c4, "إزالة الضوضاء (الإضاءة)", 0, 100, prefs.getInt("dn", 30));
+        sChroma = seek(c4, "إزالة ضوضاء الألوان", 0, 100, prefs.getInt("dnc", 50));
+        temporalSwitch = sw(c4, "تنظيف زمني موجّه بالحركة", prefs.getBoolean("tmp", true));
+        sTemporal = seek(c4, "قوة التنظيف الزمني", 0, 90, prefs.getInt("tmps", 70));
+        debandSwitch = sw(c4, "تنعيم التدرجات (منع التشريط)", prefs.getBoolean("deb", true));
+        sSharpen = seek(c4, "حدة نهائية متكيفة", 0, 100, prefs.getInt("sh", 35));
+
+        LinearLayout c5 = card(root, "HDR");
+        sExpand = seek(c5, "قوة توسيع الإضاءات", 0, 100, prefs.getInt("exp", 80));
+        sPeak = seek(c5, "قمة السطوع (nit)", 0, 3, prefs.getInt("peak", 1));
+        sVibrance = seek(c5, "ثراء الألوان", 0, 100, prefs.getInt("vib", 20));
+        c5.addView(text("افتراض منحنى مصدر SDR", 13, Color.WHITE), lp(6));
+        gammaGroup = radios(c5, new String[]{"BT.1886 (2.4) – معيار التحويل ITU", "2.2 – مشاهدة الهاتف"}, prefs.getInt("gamma", 0));
+        measureSwitch = sw(c5, "قياس دقيق لـ MaxCLL/MaxFALL (مرور إضافي)", prefs.getBoolean("measure", true));
+
+        LinearLayout c6 = card(root, "المعاينة");
+        posLabel = text("الموضع: 0.0 ث", 13, Color.WHITE);
+        c6.addView(posLabel);
+        sPos = seek(c6, null, 0, 1000, 300);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        previewBtn = button("معاينة إطار قبل/بعد", false);
+        clipBtn = button("معاينة مقطع 3 ثوانٍ", false);
+        row.addView(previewBtn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(clipBtn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        c6.addView(row, lp(6));
+        previewBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runPreview(); } });
+        clipBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startExport(true); } });
+        previewNote = text("", 12, dim);
+        c6.addView(previewNote, lp(4));
+        compare = new CompareView(this);
+        c6.addView(compare, lp(6));
+        video = new VideoView(this);
+        video.setVisibility(View.GONE);
+        c6.addView(video, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
+
+        LinearLayout c7 = card(root, "التصدير");
+        exportBtn = button("بدء التصدير", true);
+        exportBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            if (JobManager.get().busy()) JobManager.get().cancel(); else startExport(false);
+        }});
+        c7.addView(exportBtn);
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(1000);
+        c7.addView(progress, lp(8));
+        statusText = text("", 14, Color.WHITE);
+        c7.addView(statusText);
+        etaText = text("", 13, dim);
+        c7.addView(etaText);
+        resultText = text("", 12, Color.WHITE);
+        resultText.setTextIsSelectable(true);
+        c7.addView(resultText, lp(6));
+        openBtn = button("فتح الملف الناتج", false);
+        openBtn.setVisibility(View.GONE);
+        c7.addView(openBtn, lp(6));
+
+        CompoundButton.OnCheckedChangeListener occ = new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean c) { saveAndRefresh(); }
+        };
+        for (Switch s : new Switch[]{aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch}) s.setOnCheckedChangeListener(occ);
+        RadioGroup.OnCheckedChangeListener rc = new RadioGroup.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(RadioGroup g, int id) { saveAndRefresh(); }
+        };
+        for (RadioGroup g : new RadioGroup[]{presetGroup, resGroup, aiScaleGroup, gammaGroup}) g.setOnCheckedChangeListener(rc);
+
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(bg);
+        sv.addView(root);
+        sv.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override public WindowInsets onApplyWindowInsets(View v, WindowInsets in) {
+                v.setPadding(0, in.getSystemWindowInsetTop(), 0, in.getSystemWindowInsetBottom());
+                return in;
+            }
+        });
+        setContentView(sv);
+    }
+
+    // ------------------------------------------------------------------ settings
+    private int checked(RadioGroup g) {
+        for (int i = 0; i < g.getChildCount(); i++) if (((RadioButton) g.getChildAt(i)).isChecked()) return i;
+        return 0;
+    }
+
+    private Presets preset() { return Presets.values()[checked(presetGroup)]; }
+
+    private int targetShort() { return new int[]{0, 720, 1080, 1440, 2160}[checked(resGroup)]; }
+
+    private float peakNits() { return new float[]{600, 1000, 1500, 2000}[sPeak.getProgress()]; }
+
+    private PipelineParams params() {
+        PipelineParams p = new PipelineParams();
+        p.ai = aiSwitch.isChecked();
+        p.aiAmount = sAi.getProgress() / 100f;
+        p.aiWorkScale = checked(aiScaleGroup) == 0 ? 1f : 0.5f;     // never chosen automatically
+        if (st.src != null && p.aiWorkScale == 0.5f && Math.min(st.src.width, st.src.height) <= 720) p.aiWorkScale = 1f;
+        p.denoiseLuma = sDenoise.getProgress() / 100f;
+        p.denoiseChroma = sChroma.getProgress() / 100f;
+        p.temporal = temporalSwitch.isChecked();
+        p.temporalStrength = sTemporal.getProgress() / 100f;
+        p.deband = debandSwitch.isChecked();
+        p.sharpen = sSharpen.getProgress() / 100f * 0.8f;
+        p.expand = sExpand.getProgress() / 100f;
+        p.peak = peakNits();
+        p.vibrance = sVibrance.getProgress() / 100f * 0.6f;
+        p.sdrGamma = checked(gammaGroup);
+        return p;
+    }
+
+    private long bitrate() {
+        if (st.src == null) return 0;
+        int[] d = ExportJob.planDims(st.src, preset(), targetShort());
+        long base = preset().startBitrate(d[0], d[1], st.src.avgFps);
+        double f = Math.pow(4, (sBitrate.getProgress() - 50) / 50.0);       // x0.25 .. x4 around the starting point
+        return Math.round(base * f);
+    }
+
+    private void saveAndRefresh() {
+        prefs.edit().putInt("preset", checked(presetGroup)).putInt("res", checked(resGroup)).putInt("aiQuality", checked(aiScaleGroup))
+                .putInt("gamma", checked(gammaGroup)).putBoolean("ai", aiSwitch.isChecked()).putBoolean("tmp", temporalSwitch.isChecked())
+                .putBoolean("deb", debandSwitch.isChecked()).putBoolean("measure", measureSwitch.isChecked()).putBoolean("audio", audioSwitch.isChecked())
+                .putInt("bitrate", sBitrate.getProgress()).putInt("aiAmt", sAi.getProgress()).putInt("dn", sDenoise.getProgress()).putInt("dnc", sChroma.getProgress())
+                .putInt("tmps", sTemporal.getProgress()).putInt("sh", sSharpen.getProgress()).putInt("exp", sExpand.getProgress()).putInt("peak", sPeak.getProgress())
+                .putInt("vib", sVibrance.getProgress()).apply();
+        refreshAll();
+    }
+
+    // ------------------------------------------------------------------ refresh
+    /** Exactly the plan ExportJob will use (encoder, aligned size, fps); the self test must match it. */
+    private ExportJob.Plan plan() {
+        if (st.caps == null) return null;
+        if (st.src == null) {
+            ExportJob.Plan pl = new ExportJob.Plan();
+            pl.w = 1920; pl.h = 1080; pl.fps = 30;
+            pl.enc = preset().hdr ? st.caps.pickHdrEncoder(1920, 1080, 30) : st.caps.pickSdrEncoder(preset().mime, 1920, 1080, 30);
+            return pl;
+        }
+        return ExportJob.planOutput(st.caps, st.src, preset(), targetShort());
+    }
+
+    private DeviceCaps.Enc plannedEncoder() { ExportJob.Plan p = plan(); return p == null || p.error != null ? null : p.enc; }
+
+    private String selfTestKey(ExportJob.Plan p) {
+        return (preset().hdr ? "h:" : "s:") + p.enc.name + ":" + p.w + "x" + p.h + ":" + String.format(Locale.US, "%.3f", p.fps);
+    }
+
+    private EncodeSelfTest.Result currentSelfTest() {
+        ExportJob.Plan p = plan();
+        if (p == null || p.enc == null || p.error != null) return null;
+        String key = selfTestKey(p);
+        EncodeSelfTest.Result r = st.selfTests.get(key);
+        if (r == null) {
+            r = EncodeSelfTest.load(this, preset().hdr, p.enc.name, p.w, p.h, p.fps);
+            if (r != null) st.selfTests.put(key, r);
+        }
+        return r;
+    }
+
+    private void refreshAll() {
+        srcText.setText(st.src == null ? "لم يُختر فيديو" : st.src.summaryArabic());
+        if (st.caps != null) devText.setText(st.caps.exportReport() + "\n" + st.caps.displayReport());
+        EncodeSelfTest.Result r = currentSelfTest();
+        DeviceCaps.Enc e = plannedEncoder();
+        if (e == null) selfTestText.setText(st.caps == null ? "" : "لا يوجد مرمّز مناسب لهذا الإخراج");
+        else if (r == null) {
+            ExportJob.Plan pl = plan();
+            selfTestText.setText("لم يُفحص مسار " + (preset().hdr ? "HDR10" : "SDR") + " بهذا الإعداد بالضبط (" + e.name + " · " + pl.w + "×" + pl.h
+                    + String.format(Locale.US, " · %.3f fps", pl.fps) + "). التصدير يتطلب الفحص بنفس الإعداد.");
+        }
+        else selfTestText.setText(r.summary());
+        boolean hdrSrc = st.src != null && st.src.isHdr();
+        aiSwitch.setEnabled(!hdrSrc);
+        if (hdrSrc && aiSwitch.isChecked()) aiSwitch.setChecked(false);
+        String ai = (st.aiStatus == null ? "حالة النموذج: لم يُفحص (يُفحص تلقائياً عند التصدير)" : "حالة النموذج: " + st.aiStatus)
+                + "\nأعلى جودة: الأفضل في الاختبارات (يحافظ على قوام الشعر والبشرة). الأسرع: نحو 4 أضعاف السرعة مع فقدان قوام دقيق."
+                + (st.src != null && Math.min(st.src.width, st.src.height) > 1080 ? "\nمصدر 4K بأعلى جودة مكلف جداً: شغّل «معاينة مقطع» أولاً لقياس الزمن الفعلي، أو استخدم التحسين التقليدي (أطفئ AI)." : "");
+        if (hdrSrc) ai = "AI غير متاح لمصدر HDR: النموذج مدرّب على صور SDR، وتمرير PQ إليه يفسد الإضاءات. يُستخدم التحسين التقليدي.";
+        aiText.setText(ai);
+        long br = bitrate();
+        bitrateLabel.setText(st.src == null ? "معدل البت: يُحدد بعد اختيار الفيديو" :
+                String.format(Locale.US, "معدل البت: %.1f Mbps (نقطة بداية %s، عدّلها وقارن على عينات)", br / 1e6, preset().label));
+        if (st.src != null) {
+            long need = (long) ((br + 320_000) / 8.0 * st.src.durationUs / 1e6);
+            long avail = new StatFs(Environment.getExternalStorageDirectory().getPath()).getAvailableBytes();
+            storageText.setText(String.format(Locale.US, "الحجم المتوقع ~%d MB · المتاح %d MB%s", need >> 20, avail >> 20, avail < need * 1.1 ? " ⚠ المساحة غير كافية" : ""));
+            storageText.setTextColor(avail < need * 1.1 ? Color.parseColor("#FF6B6B") : dim);
+            posLabel.setText(String.format(Locale.US, "الموضع: %.1f ث", posUs() / 1e6));
+            if (st.measuredMsPerFrame > 0) {
+                PipelineParams p = params();
+                int passes = preset().hdr && measureSwitch.isChecked() ? 2 : 1;
+                double sec = st.src.frameCount * st.measuredMsPerFrame / 1000.0 * passes;
+                etaText.setText(String.format(Locale.US, "تقدير مبني على قياس المعاينة (%.0f ms/إطار): ~%d دقيقة%s", st.measuredMsPerFrame, (int) Math.ceil(sec / 60),
+                        passes == 2 ? " (يفترض أن مرور القياس يستغرق زمن المعالجة نفسه)" : ""));
+            }
+        }
+        onUpdate(JobManager.get().snapshot());
+        if (st.before != null) compare.set(st.before, st.after);
+    }
+
+    private long posUs() { return st.src == null ? 0 : (long) (st.src.firstPtsUs + Math.max(0L, st.src.durationUs - 3_000_000L) * sPos.getProgress() / 1000.0); }
+
+    // ------------------------------------------------------------------ actions
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != PICK || res != RESULT_OK || data == null || data.getData() == null) return;
+        final Uri uri = data.getData();
+        try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException ignored) { }
+        srcText.setText("جارٍ تحليل الملف…");
+        bg(new Runnable() { @Override public void run() {
+            try {
+                SourceInfo s = SourceProbe.probe(getApplicationContext(), uri);
+                st.uri = uri; st.src = s; st.before = st.after = null; st.measuredMsPerFrame = 0;
+            } catch (Exception e) {
+                final String m = e.getMessage();
+                ui(new Runnable() { @Override public void run() { srcText.setText("تعذر قراءة الملف: " + m); } });
+                return;
+            }
+            ui(new Runnable() { @Override public void run() { refreshAll(); } });
+        }});
+    }
+
+    private void runSelfTest() {
+        final ExportJob.Plan pl = plan();
+        if (pl == null || pl.enc == null) { toastText("لا يوجد مرمّز"); return; }
+        if (pl.error != null) { selfTestText.setText(pl.error); return; }
+        final boolean hdr = preset().hdr;
+        final long br = st.src != null ? bitrate() : preset().startBitrate(pl.w, pl.h, pl.fps);
+        final String key = selfTestKey(pl);
+        selfTestText.setText(String.format(Locale.US, "جارٍ الفحص بإعداد التصدير (%s · %d×%d · %.3f fps): أنماط معروفة ← ترميز ← تحليل البتستريم ← فك ترميز ← قياس…",
+                pl.enc.name, pl.w, pl.h, pl.fps));
+        selfTestBtn.setEnabled(false);
+        bg(new Runnable() { @Override public void run() {
+            final EncodeSelfTest.Result r = EncodeSelfTest.run(getApplicationContext(), pl.enc, hdr, pl.w, pl.h, (float) pl.fps, br);
+            st.selfTests.put(key, r);
+            ui(new Runnable() { @Override public void run() { selfTestBtn.setEnabled(true); refreshAll(); } });
+        }});
+    }
+
+    private void runAiTest() {
+        aiText.setText("جارٍ تحميل النموذج وتشغيل متجه الاختبار على GPU…");
+        aiTestBtn.setEnabled(false);
+        bg(new Runnable() { @Override public void run() {
+            String status;
+            Egl egl = null;
+            GlKit k = null;
+            SrEngine sr = null;
+            long t0 = System.nanoTime();
+            try {
+                egl = new Egl(false);
+                egl.makeCurrentOffscreen();
+                k = new GlKit(new ShaderLoader(getAssets()));
+                sr = new SrEngine(k, getAssets());
+                sr.selfTest(getAssets());
+                status = sr.status + String.format(Locale.US, " · %d ms", (System.nanoTime() - t0) / 1000000);
+                st.aiReady = sr.ready;
+            } catch (Throwable t) {
+                status = "غير جاهز: " + t.getMessage();
+                st.aiReady = false;
+            } finally {
+                if (sr != null) sr.release();
+                if (k != null) k.release();
+                if (egl != null) egl.release();
+            }
+            st.aiStatus = status;
+            ui(new Runnable() { @Override public void run() { aiTestBtn.setEnabled(true); refreshAll(); } });
+        }});
+    }
+
+    private void runPreview() {
+        if (st.src == null) { toastText("اختر فيديو أولاً"); return; }
+        previewBtn.setEnabled(false);
+        previewNote.setText("جارٍ معالجة الإطار…");
+        final PipelineParams p = params();
+        final boolean hdr = preset().hdr;
+        final int[] d = ExportJob.planDims(st.src, preset(), targetShort());
+        final long t = posUs();
+        bg(new Runnable() { @Override public void run() {
+            final PreviewRenderer.Result r = PreviewRenderer.render(getApplicationContext(), st.uri, st.src, p, t, hdr, d[0], d[1]);
+            ui(new Runnable() { @Override public void run() {
+                previewBtn.setEnabled(true);
+                if (r.error != null) { previewNote.setText("فشلت المعاينة: " + r.error); return; }
+                st.before = r.before; st.after = r.after;
+                compare.set(r.before, r.after);
+                previewNote.setText(String.format(Locale.US, "زمن معالجة الإطار: %d ms (دون ترميز؛ التنظيف الزمني لا يظهر في إطار واحد). %s", r.ms, r.note));
+            }});
+        }});
+    }
+
+    private void startExport(boolean preview) {
+        if (st.src == null) { toastText("اختر فيديو أولاً"); return; }
+        if (JobManager.get().busy()) { toastText("هناك مهمة قيد التشغيل"); return; }
+        Presets ps = preset();
+        EncodeSelfTest.Result r = currentSelfTest();
+        if (r == null || !r.usable()) {
+            statusText.setText(ps.hdr ? "لا يمكن تصدير HDR10 قبل نجاح «فحص مسار التصدير» على هذا الجهاز. اختر SDR أو شغّل الفحص."
+                    : "شغّل «فحص مسار التصدير» أولاً للتأكد من صحة الألوان.");
+            return;
+        }
+        ExportRequest q = new ExportRequest();
+        q.uri = st.uri; q.src = st.src; q.params = params(); q.preset = ps; q.targetShortSide = targetShort();
+        q.bitrateOverride = bitrate(); q.measureLight = measureSwitch.isChecked() && !preview; q.keepAudio = audioSwitch.isChecked();
+        q.selfTest = r; q.preview = preview;
+        if (preview) { q.startUs = posUs(); q.endUs = q.startUs + 3_000_000L; }
+        JobManager.get().setPending(q);
+        video.setVisibility(View.GONE);
+        startForegroundService(new Intent(this, ExportService.class));
+    }
+
+    @Override
+    public void onUpdate(JobManager.Snapshot s) {
+        if (statusText == null) return;
+        boolean running = s.state == JobManager.State.RUNNING;
+        exportBtn.setText(running ? "إلغاء" : "بدء التصدير");
+        clipBtn.setEnabled(!running);
+        progress.setProgress((int) (s.fraction * 1000));
+        String head = (s.preview ? "[معاينة] " : "") + s.stage + (s.thermal.isEmpty() ? "" : " · " + s.thermal);
+        statusText.setText(s.state == JobManager.State.FAILED ? head + "\n" + s.error : head);
+        if (running) etaText.setText(s.detail + (s.etaSec >= 0 ? String.format(Locale.US, " · متبقٍ ~%d:%02d (مقاس)", (int) (s.etaSec / 60), (int) (s.etaSec % 60)) : ""));
+        if (!running && s.state != JobManager.State.IDLE) resultText.setText(s.result);
+        if (s.state == JobManager.State.DONE && s.preview && s.outputPath != null && s.msPerFrame > 0) {
+            if (st.lastPreviewPath == null || !st.lastPreviewPath.equals(s.outputPath + s.msPerFrame)) {
+                st.lastPreviewPath = s.outputPath + s.msPerFrame;
+                st.measuredMsPerFrame = s.msPerFrame;
+                video.setVisibility(View.VISIBLE);
+                video.setVideoURI(Uri.fromFile(new java.io.File(s.outputPath)));
+                video.start();
+                boolean hdrScreen = st.caps != null && st.caps.displayHdr10;
+                previewNote.setText(preset().hdr ? (hdrScreen ? "المقطع HDR10 يُعرض بإضاءة HDR على هذه الشاشة." : "الشاشة لا تعلن دعم HDR10: النظام سيعرض المقطع بتحويل SDR.") : "");
+                refreshAll();
+            }
+        }
+        final String out = s.outputUri;
+        openBtn.setVisibility(s.state == JobManager.State.DONE && out != null && !s.preview ? View.VISIBLE : View.GONE);
+        openBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(out), "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        }});
+    }
+
+    // ------------------------------------------------------------------ widgets
+    private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+
+    private LinearLayout.LayoutParams lp(int top) {
+        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        l.topMargin = dp(top);
+        return l;
+    }
+
+    private TextView text(String s, float size, int color) {
+        TextView t = new TextView(this);
+        t.setText(s); t.setTextSize(size); t.setTextColor(color);
+        t.setGravity(Gravity.START);
+        t.setTextDirection(View.TEXT_DIRECTION_ANY_RTL);
+        return t;
+    }
+
+    private LinearLayout card(LinearLayout root, String title) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(12), dp(10), dp(12), dp(12));
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(card); g.setCornerRadius(dp(12));
+        c.setBackground(g);
+        TextView t = text(title, 16, accent);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        c.addView(t);
+        root.addView(c, lp(12));
+        return c;
+    }
+
+    private Button button(String s, boolean primary) {
+        Button b = new Button(this);
+        b.setText(s);
+        b.setAllCaps(false);
+        b.setTextColor(primary ? Color.BLACK : Color.WHITE);
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(primary ? accent : Color.parseColor("#2C2C33")); g.setCornerRadius(dp(10));
+        b.setBackground(g);
+        return b;
+    }
+
+    private Switch sw(LinearLayout parent, String label, boolean on) {
+        Switch s = new Switch(this);
+        s.setText(label); s.setTextColor(Color.WHITE); s.setChecked(on);
+        parent.addView(s, lp(8));
+        return s;
+    }
+
+    private SeekBar seek(LinearLayout parent, final String label, int min, int max, int value) {
+        final TextView t = label == null ? null : text(label + ": " + value, 13, Color.WHITE);
+        if (t != null) parent.addView(t, lp(8));
+        SeekBar s = new SeekBar(this);
+        s.setMin(min); s.setMax(max); s.setProgress(value);
+        s.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar b, int v, boolean user) {
+                if (t != null) t.setText(label + ": " + (b == sPeak ? (int) peakNits() : v));
+            }
+            @Override public void onStartTrackingTouch(SeekBar b) { }
+            @Override public void onStopTrackingTouch(SeekBar b) { saveAndRefresh(); }
+        });
+        parent.addView(s);
+        return s;
+    }
+
+    private RadioGroup radios(LinearLayout parent, String[] labels, int sel) {
+        RadioGroup g = new RadioGroup(this);
+        for (int i = 0; i < labels.length; i++) {
+            RadioButton r = new RadioButton(this);
+            r.setId(View.generateViewId());
+            r.setText(labels[i]); r.setTextColor(Color.WHITE);
+            g.addView(r);
+            if (i == sel) r.setChecked(true);
+        }
+        parent.addView(g);
+        return g;
+    }
+
+    private void toastText(String s) { android.widget.Toast.makeText(this, s, android.widget.Toast.LENGTH_SHORT).show(); }
+}

@@ -1,0 +1,25 @@
+PASS pq_203_nits  PQ(203)=0.5806888810416109
+PASS pq_roundtrip  max rel err 2.0471820874781172E-13
+PASS bt2020_limited_10bit_white_black  Y white 940.000 black 64.000
+PASS encoder_matrix_compensation  max error 2.8040976007503993E-5 codes (float precision)
+PASS hdr_static_info_bytes  rx=34000 max=1000 min=50 cll=840 fall=61
+PASS unmeasured_cll_is_zero_unknown  MaxCLL/MaxFALL written as 0 when not measured
+PASS scene_cut_logic  first=true same=false flash=false back=false newShot=true
+ALL JVM TESTS PASS
+ramp rows written
+PASS hdr10_stream_detected  SPS: 768x576 · luma 10-bit · chroma 10-bit · chroma_format 1 · VUI primaries=9 transfer=16 matrix=9 limited · SEI mastering: 1000 nit · SEI CLL: 841/61
+PASS hdr10_fhd_scaling_lists_bframes  SPS: 1920x1080 · luma 10-bit · chroma 10-bit · chroma_format 1 · VUI primaries=9 transfer=16 matrix=9 limited · SEI mastering: 1000 nit · SEI CLL: 1000/400
+PASS sdr_8bit_not_hdr  SPS: 320x240 · luma 8-bit · chroma 8-bit · chroma_format 1 · VUI بلا وصف ألوان · SEI mastering: غير موجود · SEI CLL: غير موجود
+PASS 10bit_bt709_without_sei_not_hdr10  SPS: 320x240 · luma 10-bit · chroma 10-bit · chroma_format 1 · VUI primaries=1 transfer=1 matrix=1 limited · SEI mastering: غير موجود · SEI CLL: غير موجود
+PASS length_prefixed_framing  SPS: 768x576 · luma 10-bit · chroma 10-bit · chroma_format 1 · VUI primaries=9 transfer=16 matrix=9 limited · SEI mastering: 1000 nit · SEI CLL: 841/61
+PASS sei_injection_parsed_back  SPS: 640x360 · luma 10-bit · chroma 10-bit · chroma_format 1 · VUI primaries=9 transfer=16 matrix=9 limited · SEI mastering: 1000 nit · SEI CLL: 987/321
+PASS sei_injection_only_once_and_detected  
+PASS emulation_prevention_roundtrip  2000 random payloads
+PASS length_prefix_not_mistaken_for_start_code  
+PASS ramp_precision_10bit_31M  coverage90=43 distinct=49 -> 10-bit
+PASS ramp_precision_10bit_7M  coverage90=34 distinct=49 -> 10-bit
+PASS ramp_precision_8bit_31M  coverage90=13 distinct=36 -> not 10-bit
+PASS ramp_precision_8bit_7M  coverage90=16 distinct=52 -> not 10-bit
+ALL BITSTREAM TESTS PASS
+PASS ffprobe_reads_app_inserted_sei {"cll": [{"side_data_type": "Content light level metadata", "max_content": 987, "max_average": 321}], "mastering_max": "10000000/10000"}
+PASS ffmpeg_decodes_stream_with_inserted_sei  frames=12 errors=0

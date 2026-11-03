@@ -1,0 +1,335 @@
+{
+ "source_sha256": "73d404c6b588e437066b142cd5d73dbeeb6435f12136cdda5263a31bdc680517",
+ "out_dir": "/tmp/claude-0/-home-claude/4a08c38c-fe2f-5c02-80ff-0d0c04565e66/scratchpad/ci2/run_20261103_062413/out",
+ "checks": {
+  "sdr_to_hdr_expand0_is_bt2408_mapping": {
+   "pass": true,
+   "max_err_pq": 0.0003126665172735743,
+   "white_nits": 202.7667694091797,
+   "pq_of_white": 0.58056640625
+  },
+  "ramp_e1_monotonic_midtones_kept_peak_bounded": {
+   "pass": true,
+   "monotonic": 1.0,
+   "max_midtone_rel_dev": 0.003113331569586906,
+   "peak_nits": 965.90966796875,
+   "nits_at_75pct": 101.82009696960449,
+   "nits_at_90pct": 401.6826812744142
+  },
+  "ramp_e1_g22_monotonic_midtones_kept_peak_bounded": {
+   "pass": true,
+   "monotonic": 1.0,
+   "max_midtone_rel_dev": 0.0027776725951344414,
+   "peak_nits": 965.90966796875,
+   "nits_at_75pct": 110.69619560241699,
+   "nits_at_90pct": 433.9555023193361
+  },
+  "sdr_to_sdr_identity_no_double_transfer": {
+   "pass": true,
+   "max_err": 0.00024390197336265906
+  },
+  "sdr_to_sdr_identity_random_colours": {
+   "pass": true,
+   "max_err": 0.000244140625
+  },
+  "rand_hdr_e1_hue_preserved_no_negative": {
+   "pass": true,
+   "max_hue_shift_rad": 0.010217130201434665,
+   "chromaticity_shift_p99": 0.0008520282690625287,
+   "peak_nits": 836.8268432617188,
+   "min": 0.018649417906999588
+  },
+  "rand_hdr_vib_hue_preserved_no_negative": {
+   "pass": true,
+   "max_hue_shift_rad": 0.008862967687038426,
+   "chromaticity_shift_p99": 0.03222243692730546,
+   "peak_nits": 867.3814086914062,
+   "min": 0.018628910183906555
+  },
+  "pq_to_sdr_monotonic_no_hard_clip": {
+   "pass": true,
+   "sdr_at_500nits": 0.98876953125,
+   "sdr_at_100nits": 0.682861328125,
+   "sdr_at_203nits": 0.8761416015625,
+   "sdr_at_1000nits": 1.0
+  },
+  "pq_to_pq_identity": {
+   "pass": true,
+   "max_err": 0.00024408061565250883
+  },
+  "yuv_pq10_ycbcr_to_working_once": {
+   "pass": true,
+   "max_err": 0.000274810930365188,
+   "tolerance": 0.001466275659824047,
+   "white": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "black": [
+    0.0,
+    5.304813385009766e-06,
+    0.0
+   ]
+  },
+  "yuv_hlg10_ycbcr_to_working_once": {
+   "pass": true,
+   "max_err": 0.0002610703031805661,
+   "tolerance": 0.001466275659824047,
+   "white": [
+    0.751953125,
+    0.751953125,
+    0.751953125
+   ],
+   "black": [
+    7.152557373046875e-07,
+    5.662441253662109e-06,
+    7.152557373046875e-07
+   ]
+  },
+  "yuv_sdr8_ycbcr_to_working_once": {
+   "pass": true,
+   "max_err": 0.0008100186521526886,
+   "tolerance": 0.005865102639296188,
+   "white": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "black": [
+    0.0,
+    4.589557647705078e-06,
+    0.0
+   ]
+  },
+  "present_tpdf_dither": {
+   "pass": true,
+   "mean": 0.49999213218688965,
+   "std_lsb": 0.42088782787323,
+   "range_lsb": 1.998046875
+  },
+  "ai_glsl_matches_reference_network": {
+   "pass": true,
+   "max_abs_err": 0.0011047720909118652,
+   "mean_abs_err": 0.00013285077875480056,
+   "max_err_8bit_codes": 0.28171688318252563
+  },
+  "ai_tiling_seamless_x4": {
+   "pass": true,
+   "max_diff_tiles_24_vs_single": 0.0
+  },
+  "ai_tiling_seamless_resampled_0.5": {
+   "pass": true,
+   "max_diff": 0.0
+  },
+  "ai_tiling_seamless_resampled_0.75": {
+   "pass": true,
+   "max_diff": 0.0
+  },
+  "motion_compensation_quality_vs_true_motion": {
+   "pass": true,
+   "psnr_warp_estimated_db": 31.51460462000302,
+   "psnr_warp_true_motion_db": "inf (integer shift)",
+   "psnr_no_compensation_db": 17.822200775146484,
+   "median_vector_px": [
+    2.0244140625,
+    -0.908203125
+   ]
+  },
+  "temporal_denoise_improves_psnr_on_moving_pan": {
+   "pass": true,
+   "psnr_db_frames4+": {
+    "off": 30.68593978881836,
+    "spatial": 33.99134826660156,
+    "temporal": 33.554115295410156,
+    "both": 35.120235443115234
+   }
+  },
+  "temporal_no_ghost_trail_behind_fast_object": {
+   "pass": true,
+   "psnr_db_frames4+": {
+    "off": 33.994102478027344,
+    "spatial": 34.72904968261719,
+    "temporal": 35.289703369140625,
+    "both": 34.4505615234375
+   },
+   "trail_mae_off": 0.015821872279047966,
+   "trail_mae_temporal": 0.016247663646936417
+  },
+  "temporal_with_resolution_change_up_and_down": {
+   "pass": true,
+   "psnr_db_vs_clean_same_pipeline": {
+    "up15": {
+     "off": 32.06623077392578,
+     "off_border": 32.08910369873047,
+     "temporal": 34.68391036987305,
+     "temporal_border": 34.43635559082031
+    },
+    "down05": {
+     "off": 37.472991943359375,
+     "off_border": 37.47328567504883,
+     "temporal": 38.95232391357422,
+     "temporal_border": 38.836830139160156
+    }
+   }
+  },
+  "flash_preserved_not_averaged_and_not_a_cut": {
+   "pass": true,
+   "out_over_in_mean_frame6": 0.9981978535652161,
+   "frame7": 0.9994024038314819,
+   "cut_flags": [
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+   ],
+   "structure_d": [
+    0,
+    0.004028392036184675,
+    0.003928608793686442,
+    0.003821794962149414,
+    0.004236664770342903,
+    0.004113283862863622,
+    0.1258325737012401,
+    0.0034736040270121325,
+    0.12540474905102922,
+    0.004288941463861478,
+    0.004002666749570968,
+    0.0036507239108647988
+   ]
+  },
+  "scene_cut_detection_vs_ffmpeg_scene_score": {
+   "pass": true,
+   "ffmpeg_cuts(scene>0.3)": [
+    2,
+    99,
+    155,
+    201
+   ],
+   "ours": [
+    2,
+    99,
+    155,
+    201
+   ],
+   "matched": 4,
+   "false_positive": []
+  },
+  "deband_reduces_hdr_step_size": {
+   "pass": true,
+   "nodeband": {
+    "max_step_10bit_codes": 1.998046875,
+    "p99_step": 1.998046875,
+    "monotonic": true
+   },
+   "deband": {
+    "max_step_10bit_codes": 0.9990234375,
+    "p99_step": 0.9990234375,
+    "monotonic": false
+   }
+  },
+  "maxcll_maxfall_gpu_measurement_matches_numpy": {
+   "pass": true,
+   "gpu_maxcll": 840.5,
+   "numpy_maxcll": 840.568115234375,
+   "gpu_maxfall": 60.875723379629626,
+   "numpy_maxfall": 60.87471008300781
+  },
+  "hdr10_file_tags_metadata_and_pixels": {
+   "pass": true,
+   "stream": {
+    "codec_name": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "color_range": "tv",
+    "color_space": "bt2020nc",
+    "color_transfer": "smpte2084",
+    "color_primaries": "bt2020",
+    "nb_frames": "48"
+   },
+   "content_light": [
+    {
+     "side_data_type": "Content light level metadata",
+     "max_content": 841,
+     "max_average": 61
+    }
+   ],
+   "mastering": [
+    {
+     "side_data_type": "Mastering display metadata",
+     "red_x": "35400/50000",
+     "red_y": "14600/50000",
+     "green_x": "8500/50000",
+     "green_y": "39850/50000",
+     "blue_x": "6550/50000",
+     "blue_y": "2300/50000",
+     "white_point_x": "15635/50000",
+     "white_point_y": "16450/50000",
+     "min_luminance": "50/10000",
+     "max_luminance": "10000000/10000"
+    }
+   ],
+   "decoded_frames": 48,
+   "flat_patch_max_err_10bit_codes": 1.0009868502616996,
+   "natural_frame_psnr_db_after_x265": 46.550594329833984
+  },
+  "app_hevc_parser_agrees_with_ffprobe": {
+   "pass": true,
+   "app_parser": {
+    "sps": true,
+    "bitDepth": 10,
+    "primaries": 9,
+    "transfer": 16,
+    "matrix": 9,
+    "fullRange": false,
+    "mdcv": true,
+    "mdcvMaxLum": 10000000,
+    "cll": true,
+    "maxCll": 841,
+    "maxFall": 61,
+    "hdr10": true
+   },
+   "ffprobe_cll": {
+    "side_data_type": "Content light level metadata",
+    "max_content": 841,
+    "max_average": 61
+   }
+  },
+  "uhd_4k_sdr_to_hdr10_runs": {
+   "pass": true,
+   "out": [
+    3840,
+    2160
+   ],
+   "peak_nits": 531.1403198242188,
+   "mean_nits": 122.69786834716797,
+   "swiftshader_ms": 18085
+  },
+  "uhd_4k_hdr10_source_kept_in_pq": {
+   "pass": true,
+   "p50_err_10bit_codes": 0.4046337604522705,
+   "p99.9_err": 1.6398155689239502,
+   "max_err": 1.914144515991211,
+   "source_peak_nits": 811.4765014648438,
+   "output_peak_nits": 814.601318359375,
+   "note": "no enhancement enabled: PQ in -> PQ out; chroma 4:4:4 in this test"
+  },
+  "visual_comparison_sheets_rendered": {
+   "pass": true,
+   "sheets": [
+    "same_crop_face.png",
+    "same_crop_fur.png",
+    "same_crop_lines.png",
+    "same_crop_messi.png"
+   ]
+  }
+ }
+}

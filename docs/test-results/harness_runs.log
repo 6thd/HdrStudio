@@ -1,0 +1,16 @@
+{"test":"compile","ms":121,"result":{"compiled":["ai_blend.frag","copy.frag","deband.frag","denoise.frag","hdr_map.frag","input_tex_yuv.frag","luma_down.frag","me_search.frag","mv_median.frag","pattern.frag","present.frag","reduce.frag","resize.frag","sharpen.frag","sr_conv.frag","sr_final.frag","sr
+{"test":"color","ms":828,"result":{"yuv_pq10":256,"yuv_hlg10":256,"yuv_sdr8":256}}
+{"test":"sr_reference","ms":6062,"result":{"tiles":1}}
+{"test":"sr_tiling","ms":394226,"result":{"t128_f1":1,"t24_f1":16,"t128_f05":1,"t24_f05":16,"t40_f075":6,"t128_f075":1}}
+{"test":"motion","ms":1299,"result":{"mvW":160,"mvH":120,"frames":3,"cuts":false}}
+{"test":"temporal","ms":28893,"result":{"pan_off":{"sigma":0.019391792835051224},"pan_spatial":{"sigma":0.019391792835051224},"pan_temporal":{"sigma":0.019391792835051224},"pan_both":{"sigma":0.019391792835051224},"obj_off":{"sigma":0.017810870868222594},"obj_spatial":{"sigma":0.017810870868222594},
+{"test":"resize_temporal","ms":20425,"result":{"up15":{"w":480,"h":360},"down05":{"w":160,"h":120}}}
+{"test":"flash","ms":4613,"result":[{"cut":true,"d":0,"hd":0},{"cut":false,"d":0.004028392036184675,"hd":0.03},{"cut":false,"d":0.003928608793686442,"hd":0.03666666666666667},{"cut":false,"d":0.003821794962149414,"hd":0.03333333333333333},{"cut":false,"d":0.004236664770342903,"hd":0.0266666666666666
+{"test":"scenecut","ms":5619,"result":[[0,1,0,0],[1,0,0,0],[2,1,0.653,0.688],[3,0,0.021,0.036],[4,0,0.024,0.049],[5,0,0.03,0.051],[6,0,0.03,0.046],[7,0,0.036,0.049],[8,0,0.035,0.049],[9,0,0.035,0.041],[10,0,0.03,0.051],[11,0,0.032,0.036],[12,0,0.023,0.056],[13,0,0.021,0.059],[14,0,0.016,0.023],[15,0
+{"test":"banding","ms":312,"result":{}}
+{"test":"video","ms":127191,"result":{"frames":48,"cll":[{"max":840.5,"mean":60.72157118055556,"cut":true,"expand":0.7998497051651512},{"max":840.5,"mean":60.875723379629626,"cut":false,"expand":0.7998595385786653},{"max":840.5,"mean":60.85894097222222,"cut":false,"expand":0.7998753185943455},{"max"
+{"test":"uhd_sdr","ms":19707,"result":{"w":3840,"h":2160,"ms":18085,"sigma":0.00005966307069873687}}
+{"test":"uhd_pq","ms":15152,"result":{"w":3840,"h":2160,"ms":13200}}
+{"test":"v0_compare","ms":323,"result":{"crop_face":"ok","crop_fur":"ok","crop_lines":"ok","crop_messi":"ok"}}
+{"test":"stills","ms":499132,"result":{"still_0014_classic":{"w":358,"h":358,"ms":211,"sigma":0.004118046736174586,"expand":0.7887344179294293},"still_0014_ai":{"w":358,"h":358,"ms":114768,"tiles":4,"sigma":0.004118046736174586,"expand":0.7887344179294293},"crop_face_classic":{"w":320,"h":320,"ms":2
+{"test":"stills_same","ms":427900,"result":{"crop_face_same_classic":{"w":160,"h":160,"ms":69},"crop_face_same_ai50":{"w":160,"h":160,"ms":11528,"tiles":1},"crop_face_same_ai100":{"w":160,"h":160,"ms":90933,"tiles":4},"crop_fur_same_classic":{"w":160,"h":160,"ms":91},"crop_fur_same_ai50":{"w":160,"h

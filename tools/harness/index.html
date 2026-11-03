@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><canvas id="c" width="4" height="4"></canvas>
+<script src="shaderlib.js"></script><script src="glkit.js"></script><script src="engine.js"></script><script src="tests.js"></script>
+<script>
+(async () => {
+  const names = await (await fetch('/shaders')).json();
+  const src = {};
+  for (const n of names) src[n] = await (await fetch('/shader/' + n)).text();
+  window.SRC = src;
+  window.GL = document.getElementById('c').getContext('webgl2', { antialias: false });
+  window.K = new GlKit(window.GL, src);
+  window.READY = true;
+})();
+</script>
