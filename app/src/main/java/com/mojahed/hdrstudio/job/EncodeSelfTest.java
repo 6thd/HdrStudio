@@ -52,7 +52,7 @@ import java.util.Map;
  * A stored result applies only to an identical configuration, test version and system build.
  */
 public final class EncodeSelfTest {
-    public static final int VERSION = 7;
+    public static final int VERSION = 8;
     public enum Colour { PASS, CORRECTED, FAIL }
 
     public static final class Result {
@@ -200,7 +200,11 @@ public final class EncodeSelfTest {
                 r.rampCoverage90 = fin.pixels.minCoverage90;
                 r.seiSource = fin.seiSource;
             }
+        } catch (com.mojahed.hdrstudio.gl.GlException e) {
+            v.markNotRunBecauseEgl(e.getMessage());
+            log.append(e.getMessage()).append('\n');
         } catch (Throwable t) {
+            if (isEglInitFailure(t)) v.markNotRunBecauseEgl(t.getMessage());
             log.append("خطأ: ").append(t.getMessage()).append('\n');
         }
         r.detail = log.toString().trim();
@@ -365,6 +369,16 @@ public final class EncodeSelfTest {
         m.decoderTags = tags(outFmt);
         if (hdr) log.append("سطح EGL موسوم BT.2020 PQ: ").append(pqTagged ? "نعم" : "لا (الألوان تُقاس مباشرة أعلاه)").append('\n');
         return m;
+    }
+
+    private static boolean isEglInitFailure(Throwable t) {
+        for (Throwable x = t; x != null; x = x.getCause()) {
+            if (x instanceof com.mojahed.hdrstudio.gl.GlException) return true;
+            String m = x.getMessage();
+            if (m != null && (m.contains("RGBA1010102") || m.contains("no offscreen EGL") || m.contains("eglGetDisplay")))
+                return true;
+        }
+        return false;
     }
 
     private static int intKey(MediaFormat f, String k) { return f != null && f.containsKey(k) ? f.getInteger(k) : -1; }

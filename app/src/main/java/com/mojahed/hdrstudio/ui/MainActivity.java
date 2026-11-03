@@ -2,6 +2,9 @@ package com.mojahed.hdrstudio.ui;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -129,6 +132,17 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         selfTestBtn = button("فحص مسار التصدير (ترميز ← فك ترميز)", false);
         selfTestBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runSelfTest(); } });
         c2.addView(selfTestBtn, lp(6));
+        Button copyDiag = button("نسخ تقرير التشخيص", false);
+        copyDiag.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                String body = (devText.getText() == null ? "" : devText.getText().toString()) + "\n\n"
+                        + (selfTestText.getText() == null ? "" : selfTestText.getText().toString());
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("HDR Studio diagnostic", body));
+                statusText.setText("نُسخ تقرير التشخيص إلى الحافظة.");
+            }
+        });
+        c2.addView(copyDiag, lp(6));
 
         LinearLayout c3 = card(root, "الإخراج");
         presetGroup = radios(c3, new String[]{Presets.HDR10_MASTER.label, Presets.SDR.label, Presets.TIKTOK_HDR.label, Presets.TIKTOK_SDR.label}, prefs.getInt("preset", 0));
@@ -501,6 +515,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         t.setText(s); t.setTextSize(size); t.setTextColor(color);
         t.setGravity(Gravity.START);
         t.setTextDirection(View.TEXT_DIRECTION_ANY_RTL);
+        t.setTextIsSelectable(true);
         return t;
     }
 

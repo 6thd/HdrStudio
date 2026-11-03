@@ -14,8 +14,8 @@ android {
         applicationId = "com.mojahed.hdrstudio"
         minSdk = 29
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.2"
+        versionCode = 5
+        versionName = "2.2.1"
     }
 
     signingConfigs {

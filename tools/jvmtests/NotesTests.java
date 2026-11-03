@@ -174,6 +174,19 @@ public class NotesTests {
         PathTestVerdict nr = allPass();
         check("D_not_run_blocks_export", !nr.exportAllowed() && nr.gradationProbe == PathTestVerdict.PixelProbe.NOT_RUN
                 && nr.gradation.verdict == Check.Verdict.INCONCLUSIVE, nr.gradation.line());
+        PathTestVerdict egl = allPass();
+        egl.markNotRunBecauseEgl("no recordable RGBA1010102 EGL WINDOW config");
+        check("D_egl_init_failure_marks_dependents_not_run",
+                !egl.exportAllowed()
+                        && egl.colour.verdict == Check.Verdict.INCONCLUSIVE
+                        && egl.containerTags.verdict == Check.Verdict.INCONCLUSIVE
+                        && egl.bitstream.verdict == Check.Verdict.INCONCLUSIVE
+                        && egl.metadataTransport.verdict == Check.Verdict.INCONCLUSIVE
+                        && egl.gradationProbe == PathTestVerdict.PixelProbe.NOT_RUN
+                        && egl.colour.detail.contains("لم تُنفّذ بسبب فشل تهيئة EGL")
+                        && egl.gradation.detail.contains("لم تُنفّذ بسبب فشل تهيئة EGL")
+                        && !egl.colour.failed() && !egl.containerTags.failed(),
+                egl.colour.line());
         for (PathTestVerdict.PixelProbe p : new PathTestVerdict.PixelProbe[]{PathTestVerdict.PixelProbe.ERROR, PathTestVerdict.PixelProbe.TIMEOUT}) {
             PathTestVerdict e = allPass();
             e.setGradation(p, -1, "");

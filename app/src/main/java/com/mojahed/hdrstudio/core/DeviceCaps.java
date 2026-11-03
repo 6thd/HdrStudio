@@ -11,6 +11,7 @@ import android.os.Build;
 import android.view.Display;
 
 import com.mojahed.hdrstudio.gl.Egl;
+import com.mojahed.hdrstudio.gl.EglDiag;
 import com.mojahed.hdrstudio.gl.GlKit;
 
 import java.util.ArrayList;
@@ -53,6 +54,9 @@ public final class DeviceCaps {
     public boolean glProbed, egl10bit, eglPq, yuvTarget, colorBufferFloat, externalEssl3;
     public int maxDrawBuffers, maxTexSize, maxArrayLayers, maxTexUnits;
     public String glRenderer = "", glError;
+    public String eglReport = "";
+    public String encoderFormatReport = "";
+    public EglDiag.Offscreen eglOffscreen = EglDiag.Offscreen.NONE;
     // display (viewing only)
     public boolean displayHdr10, displayHlg, displayHdr10Plus, displayDv;
     public float displayMaxNits;
@@ -96,15 +100,34 @@ public final class DeviceCaps {
         ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
         am.getMemoryInfo(mi);
         d.memTotal = mi.totalMem; d.memAvail = mi.availMem;
+        Enc hdrEnc = d.pickHdrEncoder(1920, 1080, 30);
+        d.encoderFormatReport = EglDiag.encoderColorFormats(hdrEnc);
         return d;
     }
 
-    /** Must run on a thread without a current EGL context. */
+    /** Must run on a thread without a current EGL context. Never silently uses 8-bit for HDR. */
     public void probeGl() {
         Egl egl = null;
         try {
-            try { egl = new Egl(true); egl10bit = true; }
-            catch (RuntimeException e) { egl = new Egl(false); egl10bit = false; }
+            EglDiag.Selection hdr = EglDiag.analyze(true);
+            eglReport = hdr.report;
+            eglOffscreen = hdr.offscreen;
+            egl10bit = hdr.usableForHdrEncode();
+            if (egl10bit) {
+                egl = new Egl(hdr);
+            } else {
+                glError = "لا يوجد مسار RGB 10-bit قابل للتسجيل إلى المرمّز (انظر تعداد EGL أدناه). لم يُستخدم سطح 8-bit بديلاً.";
+                // labeled 8-bit context only to read GL_RENDERER — not an HDR path
+                try {
+                    EglDiag.Selection sdr = EglDiag.analyze(false);
+                    eglReport = eglReport + "\n" + sdr.report;
+                    if (sdr.config != null && sdr.offscreen != EglDiag.Offscreen.NONE) {
+                        egl = new Egl(sdr);
+                        glRenderer = "(سياق 8-bit للقراءة فقط، ليس مسار HDR) ";
+                    }
+                } catch (RuntimeException ignored) { }
+            }
+            if (egl == null) return;
             eglPq = egl.hasExtension("EGL_EXT_gl_colorspace_bt2020_pq");
             egl.makeCurrentOffscreen();
             String ext = GLES20.glGetString(GLES20.GL_EXTENSIONS);
@@ -112,7 +135,8 @@ public final class DeviceCaps {
             yuvTarget = ext.contains(" GL_EXT_YUV_target ");
             colorBufferFloat = ext.contains(" GL_EXT_color_buffer_float ") || ext.contains(" GL_EXT_color_buffer_half_float ");
             externalEssl3 = ext.contains(" GL_OES_EGL_image_external_essl3 ");
-            glRenderer = GLES20.glGetString(GLES20.GL_RENDERER) + " / " + GLES20.glGetString(GLES20.GL_VERSION);
+            String renderer = GLES20.glGetString(GLES20.GL_RENDERER) + " / " + GLES20.glGetString(GLES20.GL_VERSION);
+            glRenderer = (glRenderer == null ? "" : glRenderer) + renderer;
             maxDrawBuffers = GlKit.getInt(GLES30.GL_MAX_DRAW_BUFFERS);
             maxTexSize = GlKit.getInt(GLES20.GL_MAX_TEXTURE_SIZE);
             maxArrayLayers = GlKit.getInt(GLES30.GL_MAX_ARRAY_TEXTURE_LAYERS);
@@ -120,6 +144,7 @@ public final class DeviceCaps {
             glProbed = true;
         } catch (RuntimeException e) {
             glError = e.getMessage();
+            if (eglReport == null || eglReport.isEmpty()) eglReport = e.getMessage();
         } finally {
             if (egl != null) egl.release();
         }
@@ -153,15 +178,19 @@ public final class DeviceCaps {
         b.append("الجهاز: ").append(model).append(" · Android API ").append(sdk).append('\n');
         Enc h = pickHdrEncoder(1920, 1080, 30);
         b.append("مرمّز HDR (HEVC 10-bit): ").append(h == null ? "غير متوفر" : h.describe()).append('\n');
+        if (glError != null) b.append("HDR EGL: ").append(glError).append('\n');
         if (glProbed) {
             b.append("GPU: ").append(glRenderer).append('\n');
-            b.append("سطح 10-bit: ").append(yes(egl10bit)).append(" · وسم BT.2020 PQ (EGL): ").append(yes(eglPq))
+            b.append("سطح 10-bit قابل للتسجيل: ").append(yes(egl10bit)).append(" · offscreen: ").append(eglOffscreen)
+                    .append(" · وسم BT.2020 PQ (EGL): ").append(yes(eglPq))
                     .append(" · EXT_YUV_target: ").append(yes(yuvTarget)).append('\n');
             b.append("حساب FP16: ").append(yes(colorBufferFloat)).append(" · MRT: ").append(maxDrawBuffers)
                     .append(" · أقصى نسيج: ").append(maxTexSize).append('\n');
-        } else if (glError != null) b.append("فحص GPU فشل: ").append(glError).append('\n');
-        b.append("الذاكرة: ").append(memTotal / (1 << 20)).append(" MB (متاح ").append(memAvail / (1 << 20)).append(" MB)");
-        return b.toString();
+        }
+        b.append("الذاكرة: ").append(memTotal / (1 << 20)).append(" MB (متاح ").append(memAvail / (1 << 20)).append(" MB)\n");
+        if (encoderFormatReport != null && !encoderFormatReport.isEmpty()) b.append(encoderFormatReport);
+        if (eglReport != null && !eglReport.isEmpty()) b.append(eglReport);
+        return b.toString().trim();
     }
 
     public String displayReport() {

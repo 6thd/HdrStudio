@@ -1,0 +1,19 @@
+HDR Studio 2.2.1-test — EGL diagnostic (HUAWEI SCA-LX9 / Maleoon 935F)
+
+Package: com.mojahed.hdrstudio.test  versionName 2.2.1-test  versionCode 5
+APK: HDR-Studio-2.2.1-test.apk
+SHA-256: 4d8d084c6d72246c90cd527fa0842672f23c0408fea6c59400201d2aedb1fd06
+Signer: CN=HDR Studio local test build
+  cert SHA-256: 4cc961176a1b9b25fb1c8560b42bd58398e47af8980362e05120c490dd723dc4
+
+What this build does
+- Enumerates EVERY EGL config (eglGetConfigs), R/G/B/A all four, WINDOW / PBUFFER / RECORDABLE separately, eglGetError after each call.
+- Tries real offscreen paths if PBUFFER is missing on the recordable WINDOW config: PBUFFER, then EGL_KHR_surfaceless_context, then a dummy SurfaceTexture window. Uses the first that actually makeCurrent's.
+- Does not silently use an 8-bit surface for HDR. Does not skip the gradation check.
+- If EGL never becomes current, colour / tags / bitstream / metadata / gradation are INCONCLUSIVE: «لم تُنفّذ بسبب فشل تهيئة EGL» — not FAIL from a fake measurement.
+- Lists the HEVC encoder's declared colorFormats, including COLOR_FormatYUVP010 (54). That is a declaration check only; a YUV P010 encode path is NOT implemented.
+
+Phone steps
+1. Install over 2.2-test (same package, same test key). Do not uninstall com.mojahed.hdrstudio.
+2. Open the app, wait for «فحص الجهاز».
+3. Tap «نسخ تقرير التشخيص» and send the clipboard. Also run «فحص مسار التصدير» for HDR10 and copy again.

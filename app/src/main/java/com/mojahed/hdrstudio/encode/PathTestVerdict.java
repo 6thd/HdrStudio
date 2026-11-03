@@ -54,6 +54,30 @@ public final class PathTestVerdict {
     /** Only "no P010 output" is an allowed INCONCLUSIVE; NOT_RUN is not. */
     public boolean gradationUnmeasurable() { return gradationProbe == PixelProbe.UNSUPPORTED; }
 
+    /**
+     * EGL never became current, so colour/tags/bitstream/gradation were not measured.
+     * INCONCLUSIVE + this wording — not FAIL, which would look like a failed measurement.
+     */
+    public void markNotRunBecauseEgl(String eglDetail) {
+        String why = "لم تُنفّذ بسبب فشل تهيئة EGL" + (eglDetail == null || eglDetail.isEmpty() ? "" : " — " + firstLine(eglDetail));
+        colour = Check.inconclusive("دقة الألوان", why);
+        containerTags = Check.inconclusive("وسوم الحاوية", why);
+        decoderTags = Check.inconclusive("وسوم المفكك (من البتستريم فقط)", why);
+        if (hdr) {
+            bitstream = Check.inconclusive("البتستريم (عمق البت + VUI)", why);
+            metadataTransport = Check.inconclusive("نقل بيانات HDR الثابتة (قيم نموذجية)", why);
+            setGradation(PixelProbe.NOT_RUN, -1, why);
+        } else {
+            setGradation(PixelProbe.NOT_RUN, -1, why);
+        }
+    }
+
+    private static String firstLine(String s) {
+        int n = s.indexOf('\n');
+        String line = n < 0 ? s : s.substring(0, n);
+        return line.length() > 240 ? line.substring(0, 240) : line;
+    }
+
     public boolean exportAllowed() {
         if (!colour.passed() || !containerTags.passed() || decoderTags.failed()) return false;
         if (!hdr) return decoderTags.passed();          // SDR (also H.264): no independent parser -> decoder evidence needed
@@ -70,6 +94,10 @@ public final class PathTestVerdict {
     /** What the user must know about the limits of this result. */
     public List<String> limitations() {
         List<String> l = new ArrayList<>();
+        if (colour.detail.contains("لم تُنفّذ بسبب فشل تهيئة EGL")) {
+            l.add("قياسات الألوان والوسوم والبتستريم والتدرج لم تُشغَّل: فشلت تهيئة EGL قبل الترميز. ليست نتائج فحص فاشلة.");
+            return l;
+        }
         if (hdr) {
             l.add("قيم MaxCLL/MaxFALL وقمة العرض في هذا الفحص نموذجية؛ القيم النهائية تُتحقق في الملف المصدَّر نفسه.");
             if (gradation.passed()) l.add("اجتاز اختبار دقة التدرج بهذه الإعدادات (ليس إثباتاً عاماً لكل محتوى أو مرمّز).");
