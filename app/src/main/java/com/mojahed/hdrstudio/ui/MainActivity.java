@@ -45,6 +45,7 @@ import com.mojahed.hdrstudio.gl.Egl;
 import com.mojahed.hdrstudio.gl.GlKit;
 import com.mojahed.hdrstudio.gl.ShaderLoader;
 import com.mojahed.hdrstudio.job.EncodeSelfTest;
+import com.mojahed.hdrstudio.job.UndeclaredConfigTrial;
 import com.mojahed.hdrstudio.job.ExportJob;
 import com.mojahed.hdrstudio.job.ExportRequest;
 import com.mojahed.hdrstudio.job.ExportService;
@@ -61,12 +62,12 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private final UiState st = UiState.get();
     private SharedPreferences prefs;
 
-    private TextView srcText, devText, selfTestText, aiText, statusText, resultText, etaText, previewNote, storageText;
+    private TextView srcText, devText, selfTestText, trialText, aiText, statusText, resultText, etaText, previewNote, storageText;
     private RadioGroup presetGroup, resGroup, aiScaleGroup, gammaGroup;
     private Switch aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
     private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
     private TextView bitrateLabel, posLabel;
-    private Button exportBtn, selfTestBtn, aiTestBtn, previewBtn, clipBtn, openBtn;
+    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, previewBtn, clipBtn, openBtn;
     private ProgressBar progress;
     private CompareView compare;
     private VideoView video;
@@ -132,14 +133,20 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         selfTestBtn = button("فحص مسار التصدير (ترميز ← فك ترميز)", false);
         selfTestBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runSelfTest(); } });
         c2.addView(selfTestBtn, lp(6));
+        trialBtn = button("اختبار EGL #24/#25 (تجريبي، لا يفتح التصدير)", false);
+        trialBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runUndeclaredTrial(); } });
+        c2.addView(trialBtn, lp(6));
+        trialText = text("اختبار الإعدادات غير المعلنة RECORDABLE لم يُشغَّل بعد.", 12, dim);
+        c2.addView(trialText, lp(6));
         Button copyDiag = button("نسخ تقرير التشخيص", false);
         copyDiag.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 String body = (devText.getText() == null ? "" : devText.getText().toString()) + "\n\n"
-                        + (selfTestText.getText() == null ? "" : selfTestText.getText().toString());
+                        + (selfTestText.getText() == null ? "" : selfTestText.getText().toString()) + "\n\n"
+                        + (trialText.getText() == null ? "" : trialText.getText().toString());
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 cm.setPrimaryClip(ClipData.newPlainText("HDR Studio diagnostic", body));
-                statusText.setText("نُسخ تقرير التشخيص إلى الحافظة.");
+                if (statusText != null) statusText.setText("نُسخ تقرير التشخيص إلى الحافظة.");
             }
         });
         c2.addView(copyDiag, lp(6));
@@ -325,6 +332,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
                     + "). التصدير يتطلب الفحص بنفس الإعداد؛ تغيير معدل البت أو الدقة أو معدل الإطارات يتطلب فحصاً جديداً.");
         }
         else selfTestText.setText(r.summary());
+        if (st.trialReport != null) trialText.setText(st.trialReport);
         boolean hdrSrc = st.src != null && st.src.isHdr();
         aiSwitch.setEnabled(!hdrSrc);
         if (hdrSrc && aiSwitch.isChecked()) aiSwitch.setChecked(false);
@@ -389,6 +397,22 @@ public final class MainActivity extends Activity implements JobManager.Listener 
             st.selfTests.put(cfg.canonical(), r);
             ui(new Runnable() { @Override public void run() { selfTestBtn.setEnabled(true); refreshAll(); } });
         }});
+    }
+
+    private void runUndeclaredTrial() {
+        if (st.caps == null) { toastText("انتظر فحص الجهاز"); return; }
+        trialText.setText("جارٍ اختبار EGL #24/#25/#23 على Surface المرمّز بدون RECORDABLE…");
+        trialBtn.setEnabled(false);
+        bg(new Runnable() {
+            @Override public void run() {
+                try {
+                    st.trialReport = UndeclaredConfigTrial.run(getApplicationContext(), st.caps);
+                } catch (Throwable t) {
+                    st.trialReport = "فشل الاختبار التجريبي: " + t.getMessage();
+                }
+                ui(new Runnable() { @Override public void run() { trialBtn.setEnabled(true); refreshAll(); } });
+            }
+        });
     }
 
     private void runAiTest() {

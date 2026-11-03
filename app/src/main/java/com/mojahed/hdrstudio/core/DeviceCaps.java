@@ -64,25 +64,30 @@ public final class DeviceCaps {
 
     public static DeviceCaps collect(Context ctx) {
         DeviceCaps d = new DeviceCaps();
-        for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
-            if (!info.isEncoder()) continue;
-            for (String t : info.getSupportedTypes()) {
-                if (!t.equalsIgnoreCase(HEVC) && !t.equalsIgnoreCase(AVC)) continue;
-                Enc e = new Enc();
-                e.name = info.getName(); e.mime = t.toLowerCase(Locale.US);
-                e.hw = info.isHardwareAccelerated(); e.swOnly = info.isSoftwareOnly();
-                try { e.caps = info.getCapabilitiesForType(t); } catch (RuntimeException ex) { continue; }
-                for (MediaCodecInfo.CodecProfileLevel pl : e.caps.profileLevels) {
-                    if (e.mime.equals(HEVC)) {
-                        if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10) e.main10 = true;
-                        if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10) { e.main10 = true; e.hdr10Profile = true; }
-                        if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus) { e.main10 = true; e.hdr10PlusProfile = true; }
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (int kind : new int[]{MediaCodecList.REGULAR_CODECS, MediaCodecList.ALL_CODECS}) {
+            for (MediaCodecInfo info : new MediaCodecList(kind).getCodecInfos()) {
+                if (!info.isEncoder()) continue;
+                for (String t : info.getSupportedTypes()) {
+                    if (!t.equalsIgnoreCase(HEVC) && !t.equalsIgnoreCase(AVC)) continue;
+                    String key = info.getName() + "|" + t.toLowerCase(Locale.US);
+                    if (!seen.add(key)) continue;
+                    Enc e = new Enc();
+                    e.name = info.getName(); e.mime = t.toLowerCase(Locale.US);
+                    e.hw = info.isHardwareAccelerated(); e.swOnly = info.isSoftwareOnly();
+                    try { e.caps = info.getCapabilitiesForType(t); } catch (RuntimeException ex) { continue; }
+                    for (MediaCodecInfo.CodecProfileLevel pl : e.caps.profileLevels) {
+                        if (e.mime.equals(HEVC)) {
+                            if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10) e.main10 = true;
+                            if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10) { e.main10 = true; e.hdr10Profile = true; }
+                            if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus) { e.main10 = true; e.hdr10PlusProfile = true; }
+                        }
                     }
+                    e.hdrEditing = e.caps.isFeatureSupported("hdr-editing");
+                    e.wAlign = e.caps.getVideoCapabilities().getWidthAlignment();
+                    e.hAlign = e.caps.getVideoCapabilities().getHeightAlignment();
+                    d.encoders.add(e);
                 }
-                e.hdrEditing = e.caps.isFeatureSupported("hdr-editing");
-                e.wAlign = e.caps.getVideoCapabilities().getWidthAlignment();
-                e.hAlign = e.caps.getVideoCapabilities().getHeightAlignment();
-                d.encoders.add(e);
             }
         }
         DisplayManager dm = (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
@@ -100,8 +105,7 @@ public final class DeviceCaps {
         ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
         am.getMemoryInfo(mi);
         d.memTotal = mi.totalMem; d.memAvail = mi.availMem;
-        Enc hdrEnc = d.pickHdrEncoder(1920, 1080, 30);
-        d.encoderFormatReport = EglDiag.encoderColorFormats(hdrEnc);
+        d.encoderFormatReport = d.allHevcInputReport();
         return d;
     }
 
@@ -169,6 +173,42 @@ public final class DeviceCaps {
         return best;
     }
 
+    /** Every HEVC encoder and its declared input color formats — not only the one pickHdrEncoder chose. */
+    public String allHevcInputReport() {
+        StringBuilder b = new StringBuilder();
+        b.append("ALL HEVC encoders (REGULAR+ALL lists, declared capabilities, not proven):\n");
+        int n = 0;
+        Enc chosen = pickHdrEncoder(1920, 1080, 30);
+        for (Enc e : encoders) {
+            if (!HEVC.equals(e.mime)) continue;
+            n++;
+            boolean pick = chosen != null && e.name.equals(chosen.name);
+            b.append("-- ").append(e.describe()).append(pick ? "  [chosen for 1080p30 HDR]" : "").append('\n');
+            try {
+                MediaCodecInfo.VideoCapabilities vc = e.caps.getVideoCapabilities();
+                b.append("  size align ").append(e.wAlign).append("x").append(e.hAlign)
+                        .append(" max ").append(vc.getSupportedWidths().getUpper()).append("x")
+                        .append(vc.getSupportedHeights().getUpper())
+                        .append(" bitrate ").append(vc.getBitrateRange().getLower()).append("–")
+                        .append(vc.getBitrateRange().getUpper()).append('\n');
+            } catch (RuntimeException ignored) { }
+            if (e.caps.profileLevels != null) {
+                b.append("  profiles:");
+                for (MediaCodecInfo.CodecProfileLevel pl : e.caps.profileLevels) {
+                    if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain) b.append(" Main");
+                    else if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10) b.append(" Main10");
+                    else if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10) b.append(" Main10HDR10");
+                    else if (pl.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus) b.append(" Main10HDR10Plus");
+                    else b.append(" p").append(pl.profile);
+                }
+                b.append('\n');
+            }
+            b.append(EglDiag.encoderColorFormats(e));
+        }
+        if (n == 0) b.append("  (none)\n");
+        return b.toString();
+    }
+
     private static int score(Enc e, int w, int h, double fps) {
         return (e.hw ? 100 : 0) + (e.swOnly ? -50 : 0) + (e.supports(w, h, fps) ? 20 : 0) + (e.hdr10Profile ? 5 : 0) + (e.hdrEditing ? 5 : 0);
     }
@@ -177,7 +217,9 @@ public final class DeviceCaps {
         StringBuilder b = new StringBuilder();
         b.append("الجهاز: ").append(model).append(" · Android API ").append(sdk).append('\n');
         Enc h = pickHdrEncoder(1920, 1080, 30);
-        b.append("مرمّز HDR (HEVC 10-bit): ").append(h == null ? "غير متوفر" : h.describe()).append('\n');
+        b.append("مرمّز HDR المختار (HEVC 10-bit): ").append(h == null ? "غير متوفر" : h.describe()).append('\n');
+        b.append("مسار HDR المعتمد: ").append(egl10bit ? "مفتوح (RECORDABLE 10/10/10/2)" : "مغلق (لا إعداد عالي الدقة معلن RECORDABLE)").append('\n');
+        b.append("اختبار #24/#25 تجريبي ولا يفتح التصدير. تصدير SDR مستقل.\n");
         if (glError != null) b.append("HDR EGL: ").append(glError).append('\n');
         if (glProbed) {
             b.append("GPU: ").append(glRenderer).append('\n');

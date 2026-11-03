@@ -1,0 +1,14 @@
+HDR Studio 2.2.2-test — undeclared EGL config trial (no RECORDABLE)
+
+Package: com.mojahed.hdrstudio.test  versionName 2.2.2-test  versionCode 6
+Does not change the offscreen paths from 2.2.1. HDR export stays closed: no RECORDABLE high-precision config, chosen encoder does not declare P010.
+
+On the phone
+1. Install over 2.2.1-test.
+2. Open → wait for device report (now lists ALL HEVC encoders and their colorFormats).
+3. Tap «اختبار EGL #24/#25 (تجريبي، لا يفتح التصدير)».
+4. Tap «نسخ تقرير التشخيص» and send the clipboard.
+
+The trial binds configs #24, #25, then FP16 #23 to a real Main10 encoder Surface without requiring RECORDABLE. Few frames, 8 s timeout, full cleanup. Surface or a Main10 file is not enough; if gradation cannot be measured the result is INCONCLUSIVE and export is not opened. SDR export is unchanged. 8-bit is not used as an HDR stand-in.
+
+A software 10-bit encoder is only timed/measured if one is declared with P010; x265 (GPL-2) is not bundled. Otherwise HDR remains a computer-side export.

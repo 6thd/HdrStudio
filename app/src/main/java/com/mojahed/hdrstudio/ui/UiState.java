@@ -24,4 +24,5 @@ final class UiState {
     volatile Bitmap before, after;
     volatile double measuredMsPerFrame;
     volatile String lastPreviewPath;
+    volatile String trialReport;
 }
