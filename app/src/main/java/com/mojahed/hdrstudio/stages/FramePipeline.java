@@ -21,15 +21,33 @@ public final class FramePipeline {
         public int tiles; public long aiMs, totalMs;
     }
 
+    /** Called between AI tiles (cancel / thermal checks); may throw to stop the frame. */
+    public interface TileGate { void between(int done, int total); }
+
+    /**
+     * The input is a crop of a larger frame (preview, core.PreviewCrop): frame statistics come from
+     * the whole frame and position-hashed patterns use the crop origin, so the crop is processed
+     * exactly like the same pixels of a full-frame run.
+     */
+    public static final class Region {
+        public final int x, y;
+        public final double sigma, sigmaPost, expand;
+        public Region(int x, int y, double sigma, double sigmaPost, double expand) {
+            this.x = x; this.y = y; this.sigma = sigma; this.sigmaPost = sigmaPost; this.expand = expand;
+        }
+    }
+
     private final GlKit k;
     private final PipelineParams p;
     private final SrEngine sr;
     public final int srcW, srcH, outW, outH;
-    private final Tex a, b, c, zero;
+    private final Tex a, b, zero;
     private Tex[] lv = new Tex[4], lvPrev = new Tex[4];
     private final Tex[] mv = new Tex[4];
-    private final Tex mvMed, mvFinal;
-    private Tex tmpH, o1, o2, o3, lrTmp, lr, aiOut;
+    private Tex mvMed, mvFinal;
+    private Tex tmpH, o1, o2, lrTmp, lr, aiOut;
+    private TileGate gate;
+    private Region region;
     private final Tex fin;
     private final Tex[] hist = new Tex[2];
     private Tex histCur;
@@ -41,21 +59,26 @@ public final class FramePipeline {
     private final Map<String, Object> u = new HashMap<>();
     public final Info info = new Info();
 
+    /**
+     * Allocates only what the enabled stages use (see core.MemoryBudget, which mirrors this):
+     * a, b at source size; luma pyramid; motion search + previous pyramid only with temporal;
+     * tmpH/o1 only when resizing; o2 for the AI blend or as the second output-size scratch.
+     */
     public FramePipeline(GlKit k, int srcW, int srcH, PipelineParams p, SrEngine sr) {
         this.k = k; this.p = p; this.sr = sr; this.srcW = srcW; this.srcH = srcH;
         this.outW = p.outW; this.outH = p.outH;
-        a = k.tex(srcW, srcH, false); b = k.tex(srcW, srcH, false); c = k.tex(srcW, srcH, false);
+        a = k.tex(srcW, srcH, false); b = k.tex(srcW, srcH, false);
         zero = k.tex(1, 1, true, GlKit.floats(new float[4]));
         int w = srcW, h = srcH;
         for (int i = 0; i < 4; i++) {
             w = (w + 1) / 2; h = (h + 1) / 2;
-            lv[i] = k.tex(w, h, false); lvPrev[i] = k.tex(w, h, false);
-            mv[i] = k.tex(w, h, true);
+            lv[i] = k.tex(w, h, false);
+            if (p.temporal) { lvPrev[i] = k.tex(w, h, false); mv[i] = k.tex(w, h, true); }
         }
-        mvMed = k.tex(lv[1].w, lv[1].h, true);
-        mvFinal = k.tex(lv[0].w, lv[0].h, true);
+        if (p.temporal) { mvMed = k.tex(lv[1].w, lv[1].h, true); mvFinal = k.tex(lv[0].w, lv[0].h, true); }
         boolean resized = outW != srcW || outH != srcH;
-        if (resized || p.ai) { tmpH = k.tex(outW, srcH, false); o1 = k.tex(outW, outH, false); o2 = k.tex(outW, outH, false); o3 = k.tex(outW, outH, false); }
+        if (resized) { tmpH = k.tex(outW, srcH, false); o1 = k.tex(outW, outH, false); }
+        if (resized || p.ai) o2 = k.tex(outW, outH, false);
         if (p.ai) {
             int lw = Math.max(8, Math.round(srcW * p.aiWorkScale)), lh = Math.max(8, Math.round(srcH * p.aiWorkScale));
             if (p.aiWorkScale != 1f) { lrTmp = k.tex(lw, srcH, false); lr = k.tex(lw, lh, false); }
@@ -65,6 +88,10 @@ public final class FramePipeline {
     }
 
     public Tex output() { return fin; }
+
+    public void setTileGate(TileGate g) { gate = g; }
+
+    public void setRegion(Region r) { region = r; }
 
     private Map<String, Object> U() { u.clear(); return u; }
 
@@ -103,7 +130,7 @@ public final class FramePipeline {
 
     /** Scratch buffer with the same size as 'like' that is neither x nor y. */
     private Tex pick(Tex like, Tex x, Tex y) {
-        for (Tex t : new Tex[]{a, b, c, o1, o2, o3})
+        for (Tex t : new Tex[]{a, b, o1, o2})
             if (t != null && t.w == like.w && t.h == like.h && t != x && t != y) return t;
         throw new IllegalStateException("no free " + like.w + "x" + like.h + " buffer");
     }
@@ -116,20 +143,23 @@ public final class FramePipeline {
         if (p.deband) {
             m = U(); m.put("uIn", cur); m.put("uThreshold", p.workDomain == 0 ? p.debandThreshold : p.debandThreshold * 0.25f);
             m.put("uRadius", p.debandRadius); m.put("uIterations", 2);
+            m.put("uOrigin", region == null ? new float[2] : new float[]{region.x, region.y});
             k.run("deband.frag", a, m); cur = a;
         }
-        if (frame % 8 == 0 || lastCut) sigma = estimateNoise(cur);
+        if (region != null) sigma = region.sigma;
+        else if (frame % 8 == 0 || lastCut) sigma = estimateNoise(cur);
         info.sigma = sigma;
         if (p.denoiseLuma > 0 || p.denoiseChroma > 0) {
             Tex dst = cur == a ? b : a;
             m = U(); m.put("uIn", cur); m.put("uSigma", (float) sigma); m.put("uLumaAmount", p.denoiseLuma);
             m.put("uChromaAmount", p.denoiseChroma); m.put("uGrainKeep", p.grainKeep); m.put("uDomain", p.workDomain);
             k.run("denoise.frag", dst, m); cur = dst;
-            if (frame % 8 == 0 || lastCut) sigmaPost = estimateNoise(cur);
+            if (region != null) sigmaPost = region.sigmaPost;
+            else if (frame % 8 == 0 || lastCut) sigmaPost = estimateNoise(cur);
         } else sigmaPost = sigma;
         info.sigmaPost = sigmaPost;
 
-        Tex[] t = lv; lv = lvPrev; lvPrev = t;
+        if (p.temporal) { Tex[] t = lv; lv = lvPrev; lvPrev = t; }
         m = U(); m.put("uIn", cur); m.put("uFromRgb", true); m.put("uDomain", p.workDomain);
         k.run("luma_down.frag", lv[0], m);
         for (int i = 1; i < 4; i++) { m = U(); m.put("uIn", lv[i - 1]); m.put("uFromRgb", false); k.run("luma_down.frag", lv[i], m); }
@@ -147,14 +177,17 @@ public final class FramePipeline {
             m = U(); m.put("uIn", mv[0]); k.run("mv_median.frag", mvFinal, m);
         }
         if (p.workDomain == 0 && p.outMode == 0)
-            info.expand = scene.adaptExpand(thumb, p.expand, p.knee, dtSec, cut, p.sdrGamma);
+            info.expand = region != null ? region.expand : scene.adaptExpand(thumb, p.expand, p.knee, dtSec, cut, p.sdrGamma);
         boolean resized = outW != srcW || outH != srcH;
         Tex res;
         if (p.ai && sr != null) {
             long ta = System.nanoTime();
             Tex lrIn = cur;
             if (lr != null) { resize(cur, lr, lrTmp); lrIn = lr; }
-            info.tiles = sr.run(lrIn, aiOut, p.aiTile);
+            final TileGate g = gate;
+            info.tiles = sr.run(lrIn, aiOut, p.aiTile, g == null ? null : new SrEngine.TileCallback() {
+                @Override public void onTile(int done, int total) { if (done < total) { k.flush(); g.between(done, total); } }
+            });
             Tex base = cur;
             if (resized) { resize(cur, o1, tmpH); base = o1; }
             m = U(); m.put("uBase", base); m.put("uAi", aiOut); m.put("uAmount", p.aiAmount); m.put("uSkinProtect", p.aiSkinProtect);
@@ -236,7 +269,7 @@ public final class FramePipeline {
     }
 
     public void release() {
-        Tex[] all = {a, b, c, zero, mvMed, mvFinal, tmpH, o1, o2, o3, lrTmp, lr, aiOut, fin, hist[0], hist[1]};
+        Tex[] all = {a, b, zero, mvMed, mvFinal, tmpH, o1, o2, lrTmp, lr, aiOut, fin, hist[0], hist[1]};
         for (Tex t : all) k.delete(t);
         for (int i = 0; i < 4; i++) { k.delete(lv[i]); k.delete(lvPrev[i]); k.delete(mv[i]); }
     }

@@ -127,20 +127,25 @@
   class FramePipeline {
     constructor(k, srcW, srcH, outW, outH, params, sr) {
       Object.assign(this, { k, srcW, srcH, outW, outH, p: params, sr });
+      // only what the enabled stages use (mirrors FramePipeline.java and core/MemoryBudget.java)
       const t = (w, h, o) => k.tex(w, h, o);
-      this.a = t(srcW, srcH); this.b = t(srcW, srcH); this.c = t(srcW, srcH);
-      this.lv = []; this.lvPrev = [];
+      this.a = t(srcW, srcH); this.b = t(srcW, srcH);
+      this.lv = []; this.lvPrev = []; this.mv = [];
       let w = srcW, h = srcH;
-      for (let i = 0; i < 4; i++) { w = Math.ceil(w / 2); h = Math.ceil(h / 2); this.lv.push(t(w, h)); this.lvPrev.push(t(w, h)); }
-      this.mv = this.lv.map(l => t(l.w, l.h, { nearest: true }));
-      this.mvMed = t(this.lv[1].w, this.lv[1].h, { nearest: true });
-      this.mvFinal = t(this.lv[0].w, this.lv[0].h, { nearest: true });
+      for (let i = 0; i < 4; i++) {
+        w = Math.ceil(w / 2); h = Math.ceil(h / 2); this.lv.push(t(w, h));
+        if (params.temporal) { this.lvPrev.push(t(w, h)); this.mv.push(t(w, h, { nearest: true })); }
+      }
+      if (params.temporal) {
+        this.mvMed = t(this.lv[1].w, this.lv[1].h, { nearest: true });
+        this.mvFinal = t(this.lv[0].w, this.lv[0].h, { nearest: true });
+      }
       this.zero = t(1, 1, { nearest: true, data: new Float32Array(4) });   // never sample a render target
       this.hist = null; this.histNext = null;
       this.scene = new SceneAnalyzer(); this.sigma = 0.004; this.frame = 0;
-      if (outW !== srcW || outH !== srcH || params.ai) {
-        this.tmpH = t(outW, srcH); this.o1 = t(outW, outH); this.o2 = t(outW, outH); this.o3 = t(outW, outH);
-      }
+      const resized = outW !== srcW || outH !== srcH;
+      if (resized) { this.tmpH = t(outW, srcH); this.o1 = t(outW, outH); }
+      if (resized || params.ai) this.o2 = t(outW, outH);
       if (params.ai) {
         const s = params.ai.workScale;
         this.lrW = Math.round(srcW * s); this.lrH = Math.round(srcH * s);
@@ -169,19 +174,22 @@
     process(input, dt = 1 / 30) {
       const k = this.k, p = this.p; let cur = input;
       const info = { frame: this.frame };
-      if (p.deband) { k.run('deband.frag', this.a, { uIn: cur, uThreshold: p.deband.threshold, uRadius: p.deband.radius, uIterations: p.deband.iterations }); cur = this.a; }
-      if (this.frame % 8 === 0 || this.lastCut) this.sigma = this.estimateNoise(cur);
+      const rg = this.region;           // crop of a larger frame: whole-frame statistics, crop origin
+      if (p.deband) { k.run('deband.frag', this.a, { uIn: cur, uThreshold: p.deband.threshold, uRadius: p.deband.radius, uIterations: p.deband.iterations, uOrigin: rg ? [rg.x, rg.y] : [0, 0] }); cur = this.a; }
+      if (rg) this.sigma = rg.sigma;
+      else if (this.frame % 8 === 0 || this.lastCut) this.sigma = this.estimateNoise(cur);
       info.sigma = this.sigma;
       if (p.denoise && (p.denoise.luma > 0 || p.denoise.chroma > 0)) {
         const dst = cur === this.a ? this.b : this.a;
         k.run('denoise.frag', dst, { uIn: cur, uSigma: this.sigma, uLumaAmount: p.denoise.luma, uChromaAmount: p.denoise.chroma, uGrainKeep: p.denoise.grainKeep, uDomain: p.workDomain });
         cur = dst;
         // residual noise after spatial denoising drives the temporal/sharpen thresholds
-        if (this.frame % 8 === 0 || this.lastCut) this.sigmaPost = this.estimateNoise(cur);
+        if (rg) this.sigmaPost = rg.sigmaPost;
+        else if (this.frame % 8 === 0 || this.lastCut) this.sigmaPost = this.estimateNoise(cur);
       } else this.sigmaPost = this.sigma;
       info.sigmaPost = this.sigmaPost;
       // pyramid + motion
-      [this.lv, this.lvPrev] = [this.lvPrev, this.lv];
+      if (p.temporal) [this.lv, this.lvPrev] = [this.lvPrev, this.lv];
       k.run('luma_down.frag', this.lv[0], { uIn: cur, uFromRgb: true, uDomain: p.workDomain });
       for (let i = 1; i < 4; i++) k.run('luma_down.frag', this.lv[i], { uIn: this.lv[i - 1], uFromRgb: false });
       const L4 = this.lv[3];
@@ -199,8 +207,8 @@
         k.run('mv_median.frag', this.mvFinal, { uIn: this.mv[0] });   // removes noisy sub-pixel jitter
       }
       if (p.workDomain === 0 && p.outMode === 0) {
-        const a = this.scene.adaptExpand(thumb, p.hdr.expand, p.hdr.knee, dt, sc.cut, p.hdr.sdrGamma);
-        info.expand = a.expand; info.brightFrac = a.frac;
+        if (rg) info.expand = rg.expand;
+        else { const a = this.scene.adaptExpand(thumb, p.hdr.expand, p.hdr.knee, dt, sc.cut, p.hdr.sdrGamma); info.expand = a.expand; info.brightFrac = a.frac; }
       }
       const resized = this.outW !== this.srcW || this.outH !== this.srcH;
       let res;
@@ -234,7 +242,7 @@
     }
     // scratch buffer of the same size as 'like' that is not one of 'avoid'
     pick(like, avoid) {
-      const t = [this.a, this.b, this.c, this.o1, this.o2, this.o3].find(x => x && x.w === like.w && x.h === like.h && !avoid.includes(x));
+      const t = [this.a, this.b, this.o1, this.o2].find(x => x && x.w === like.w && x.h === like.h && !avoid.includes(x));
       if (!t) throw new Error('no free ' + like.w + 'x' + like.h + ' buffer');
       return t;
     }
@@ -253,5 +261,38 @@
       this.hist = dst;
     }
   }
-  root.Engine = { SrEngine, SceneAnalyzer, FramePipeline };
+  // ---------------------------------------------------------------- crop preview geometry (core/PreviewCrop.java)
+  const gcd = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
+  const lcm = (a, b) => a / gcd(a, b) * b;
+  const fdiv = (v, q) => Math.floor(v / q) * q, cdiv = (v, q) => Math.ceil(v / q) * q;
+  function cropMargin(src, out, ai, ws, debandR) {
+    const down = Math.max(1, src / out), perOut = src / out;
+    let r = Math.ceil(debandR) + 1 + 2 + 4 * down + 2 * perOut;
+    if (ai) r += 38 / ws + 4 * Math.max(1, 1 / ws);
+    return Math.ceil(r) + 4;
+  }
+  function cropStep(src, out, ai, ws) {
+    let q = src / gcd(src, out);
+    if (ai && ws !== 1) { const lr = Math.max(8, Math.round(src * ws)); q = lcm(q, src / gcd(src, lr)); }
+    return q;
+  }
+  function previewCrop(srcW, srcH, outW, outH, ai, ws, debandR, fx, fy, visOutW, visOutH) {
+    const qx = cropStep(srcW, outW, ai, ws), qy = cropStep(srcH, outH, ai, ws);
+    const vw = Math.min(srcW, cdiv(Math.ceil(visOutW * srcW / outW), qx)), vh = Math.min(srcH, cdiv(Math.ceil(visOutH * srcH / outH), qy));
+    if (vw >= Math.floor(srcW * 9 / 10) && vh >= Math.floor(srcH * 9 / 10))
+      return { x0: 0, y0: 0, w: srcW, h: srcH, outW, outH, visX: 0, visY: 0, visW: outW, visH: outH, srcX: 0, srcY: 0, srcW, srcH, margin: 0, fullFrame: true };
+    if (qx * 4 > vw || qy * 4 > vh) return null;
+    const m = cropMargin(srcW, outW, ai, ws, debandR), my = cropMargin(srcH, outH, ai, ws, debandR);
+    const place = (f, size, v, q) => Math.max(0, Math.min(fdiv(size - v, q), fdiv(Math.round(Math.max(0, Math.min(1, f)) * size - v / 2), q)));
+    const sc = (x, src, out) => Math.floor(x * out / src);
+    const vx = place(fx, srcW, vw, qx), vy = place(fy, srcH, vh, qy);
+    const x0 = Math.max(0, fdiv(vx - m, qx)), y0 = Math.max(0, fdiv(vy - my, qy));
+    const x1 = Math.min(srcW, cdiv(vx + vw + m, qx)), y1 = Math.min(srcH, cdiv(vy + vh + my, qy));
+    const ox0 = sc(x0, srcW, outW), oy0 = sc(y0, srcH, outH), ovx = sc(vx, srcW, outW), ovy = sc(vy, srcH, outH);
+    return { x0, y0, w: x1 - x0, h: y1 - y0, outW: sc(x1, srcW, outW) - ox0, outH: sc(y1, srcH, outH) - oy0,
+      visX: ovx - ox0, visY: ovy - oy0, visW: sc(vx + vw, srcW, outW) - ovx, visH: sc(vy + vh, srcH, outH) - ovy,
+      srcX: vx, srcY: vy, srcW: vw, srcH: vh, margin: Math.max(m, my), fullFrame: false };
+  }
+
+  root.Engine = { SrEngine, SceneAnalyzer, FramePipeline, previewCrop };
 })(window);

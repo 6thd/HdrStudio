@@ -253,6 +253,73 @@
       return res;
     },
 
+    // Same-resolution restoration against ground truth (prepare_data: degraded crops + originals).
+    // The x4 model at work scale s, resampled to the output: s=1 is x4-then-downscale-x4, s=0.25 is the
+    // model's native x4 from a quarter-size input. SDR out (outMode 1: identity mapping) for direct comparison.
+    async same_res_eval() {
+      const m = await meta(), e = await sr(), res = {};
+      const deb = { threshold: 1.5 / 255, radius: 12, iterations: 2 };
+      const base = { workDomain: 0, outMode: 1, deband: deb, hdr: sdrHdr() };
+      const cfgs = { classic: Object.assign({}, base, { denoise: { luma: 0.35, chroma: 0.5, grainKeep: 0.25 }, sharpen: { amount: 0.5 } }) };
+      for (const ws of [1, 0.5, 0.25]) {
+        const tag = String(Math.round(ws * 100));
+        cfgs['ai' + tag] = Object.assign({}, base, { ai: { amount: 0.8, workScale: ws, skinProtect: 0.8, tile: 128 }, sharpen: { amount: 0.25 } });
+        cfgs['model' + tag] = Object.assign({}, base, { deband: null, ai: { amount: 1, workScale: ws, skinProtect: 0, tile: 128 } });
+      }
+      for (const d of m.degraded) {
+        const g = d.deg, inT = await load(g.name, g.w, g.h);
+        for (const [cn, p] of Object.entries(cfgs)) {
+          const fp = new Engine.FramePipeline(K, g.w, g.h, g.w, g.h, p, e);
+          const t0 = performance.now(); const o = fp.process(inT);
+          await save(`sre_${g.name}_${cn}.f32`, K.read(o));
+          res[g.name + '_' + cn] = { ms: Math.round(performance.now() - t0), tiles: fp.info.tiles || 0 };
+        }
+        K.del(inT);
+      }
+      return res;
+    },
+
+    // Crop preview (core/PreviewCrop.java): crop + context margin processed with whole-frame statistics
+    // must equal the same region of the full-frame run. A naive crop (visible window only, its own
+    // statistics) is saved for contrast. Skin protection 0.8 as in the final defaults.
+    async preview_crop() {
+      const m = await meta(), e = await sr(), st = m.stills.find(s => s.name === 'still_baboon'), res = {};
+      const inT = await load(st.name, st.w, st.h);
+      const deb = { threshold: 1.5 / 255, radius: 12, iterations: 2 };
+      const base = { workDomain: 0, outMode: 0, deband: deb, hdr: sdrHdr() };
+      const cfgs = {
+        classic_up15: [Math.round(st.w * 1.5 / 2) * 2, Math.round(st.h * 1.5 / 2) * 2,
+          Object.assign({}, base, { denoise: { luma: 0.35, chroma: 0.5, grainKeep: 0.25 }, sharpen: { amount: 0.5 } })],
+        ai_same: [st.w, st.h, Object.assign({}, base, { ai: { amount: 0.8, workScale: 1, skinProtect: 0.8, tile: 128 }, sharpen: { amount: 0.25 } })],
+        ai_x2_half: [st.w * 2, st.h * 2, Object.assign({}, base, { ai: { amount: 0.8, workScale: 0.5, skinProtect: 0.8, tile: 128 }, sharpen: { amount: 0.25 } })],
+      };
+      for (const [nm, [ow, oh, p]] of Object.entries(cfgs)) {
+        const full = new Engine.FramePipeline(K, st.w, st.h, ow, oh, p, e);
+        const fo = full.process(inT), fi = full.info;
+        const g = Engine.previewCrop(st.w, st.h, ow, oh, !!p.ai, p.ai ? p.ai.workScale : 1, deb.radius, 0.62, 0.41, Math.round(ow * 0.3), Math.round(oh * 0.3));
+        if (!g || g.fullFrame) throw new Error('crop geometry ' + JSON.stringify(g));
+        const ox = Math.floor(g.x0 * ow / st.w) + g.visX, oy = Math.floor(g.y0 * oh / st.h) + g.visY;
+        await save(`pc_${nm}_full.f32`, K.read(fo, ox, oy, g.visW, g.visH));
+        // statistics as the app's PreviewRenderer gets them: a classic same-size run (no AI, no sharpen)
+        const an = new Engine.FramePipeline(K, st.w, st.h, st.w, st.h, Object.assign({}, p, { ai: null, sharpen: null }), null);
+        an.process(inT); const ai_ = an.info;
+        const ct = K.tex(g.w, g.h); K.run('crop.frag', ct, { uIn: inT, uOffset: [g.x0, g.y0] });
+        const cp = new Engine.FramePipeline(K, g.w, g.h, g.outW, g.outH, p, e);
+        cp.region = { x: g.x0, y: g.y0, sigma: ai_.sigma, sigmaPost: ai_.sigmaPost, expand: ai_.expand };
+        const t0 = performance.now(); const co = cp.process(ct); const msCrop = Math.round(performance.now() - t0);
+        await save(`pc_${nm}_crop.f32`, K.read(co, g.visX, g.visY, g.visW, g.visH));
+        const nt = K.tex(g.srcW, g.srcH); K.run('crop.frag', nt, { uIn: inT, uOffset: [g.srcX, g.srcY] });
+        const naive = new Engine.FramePipeline(K, g.srcW, g.srcH, g.visW, g.visH, p, e);
+        await save(`pc_${nm}_naive.f32`, K.read(naive.process(nt)));
+        res[nm] = { geom: g, out: [ow, oh], sigma: fi.sigma, sigmaPost: fi.sigmaPost, expand: fi.expand,
+          analysis_stats_equal_full_run: ai_.sigma === fi.sigma && ai_.sigmaPost === fi.sigmaPost && ai_.expand === fi.expand,
+          tiles_full: fi.tiles || 0, tiles_crop: cp.info.tiles || 0, ms_crop: msCrop, processed_fraction: (g.w * g.h) / (st.w * st.h) };
+        K.del(ct); K.del(nt);
+      }
+      K.del(inT);
+      return res;
+    },
+
     // 4K -> 4K: SDR source to HDR10 (classic chain), and HDR10 (PQ Y'CbCr) source kept in PQ
     async uhd_sdr() {
       const m = await meta(), a = m.uhd_sdr, inT = await load('uhd_sdr', a.w, a.h);

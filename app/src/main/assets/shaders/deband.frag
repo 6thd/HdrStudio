@@ -7,16 +7,18 @@ uniform sampler2D uIn;
 uniform float uThreshold;   // in signal units (e.g. 1.5/255 for 8-bit SDR)
 uniform float uRadius;      // pixels
 uniform int uIterations;
+uniform vec2 uOrigin;       // frame position of texel (0,0): a crop gets the same random pattern
 out vec4 o;
 void main() {
     vec2 size = vec2(textureSize(uIn, 0));
     vec2 p = gl_FragCoord.xy;
+    vec2 g = p + uOrigin;
     vec3 c = texelFetch(uIn, ivec2(p), 0).rgb;
     float thr = uThreshold;
     for (int i = 1; i <= uIterations; i++) {
         float fi = float(i);
-        float ang = hash12(p + vec2(fi * 31.0, 7.0)) * 6.2831853;
-        float rad = uRadius * fi / float(uIterations) * (0.5 + 0.5 * hash12(p + vec2(3.0, fi * 13.0)));
+        float ang = hash12(g + vec2(fi * 31.0, 7.0)) * 6.2831853;
+        float rad = uRadius * fi / float(uIterations) * (0.5 + 0.5 * hash12(g + vec2(3.0, fi * 13.0)));
         vec2 d = vec2(cos(ang), sin(ang)) * rad;
         vec2 e = vec2(-d.y, d.x);
         vec3 s1 = texture(uIn, (p + d) / size).rgb;

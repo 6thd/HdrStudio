@@ -60,7 +60,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
 
     private TextView srcText, devText, selfTestText, aiText, statusText, resultText, etaText, previewNote, storageText;
     private RadioGroup presetGroup, resGroup, aiScaleGroup, gammaGroup;
-    private Switch aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch;
+    private Switch aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
     private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
     private TextView bitrateLabel, posLabel;
     private Button exportBtn, selfTestBtn, aiTestBtn, previewBtn, clipBtn, openBtn;
@@ -169,6 +169,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         posLabel = text("الموضع: 0.0 ث", 13, Color.WHITE);
         c6.addView(posLabel);
         sPos = seek(c6, null, 0, 1000, 300);
+        cropSwitch = sw(c6, "قص 1:1 من وسط الإطار بدقة المصدر (أسرع، يطابق نفس المنطقة في التصدير)", prefs.getBoolean("crop", true));
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         previewBtn = button("معاينة إطار قبل/بعد", false);
@@ -269,7 +270,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private void saveAndRefresh() {
         prefs.edit().putInt("preset", checked(presetGroup)).putInt("res", checked(resGroup)).putInt("aiQuality", checked(aiScaleGroup))
                 .putInt("gamma", checked(gammaGroup)).putBoolean("ai", aiSwitch.isChecked()).putBoolean("tmp", temporalSwitch.isChecked())
-                .putBoolean("deb", debandSwitch.isChecked()).putBoolean("measure", measureSwitch.isChecked()).putBoolean("audio", audioSwitch.isChecked())
+                .putBoolean("deb", debandSwitch.isChecked()).putBoolean("measure", measureSwitch.isChecked()).putBoolean("audio", audioSwitch.isChecked()).putBoolean("crop", cropSwitch.isChecked())
                 .putInt("bitrate", sBitrate.getProgress()).putInt("aiAmt", sAi.getProgress()).putInt("dn", sDenoise.getProgress()).putInt("dnc", sChroma.getProgress())
                 .putInt("tmps", sTemporal.getProgress()).putInt("sh", sSharpen.getProgress()).putInt("exp", sExpand.getProgress()).putInt("peak", sPeak.getProgress())
                 .putInt("vib", sVibrance.getProgress()).apply();
@@ -414,14 +415,18 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         final boolean hdr = preset().hdr;
         final int[] d = ExportJob.planDims(st.src, preset(), targetShort());
         final long t = posUs();
+        final boolean crop = cropSwitch.isChecked();
         bg(new Runnable() { @Override public void run() {
-            final PreviewRenderer.Result r = PreviewRenderer.render(getApplicationContext(), st.uri, st.src, p, t, hdr, d[0], d[1]);
+            final PreviewRenderer.Result r = PreviewRenderer.render(getApplicationContext(), st.uri, st.src, p, t, hdr, d[0], d[1], crop);
             ui(new Runnable() { @Override public void run() {
                 previewBtn.setEnabled(true);
                 if (r.error != null) { previewNote.setText("فشلت المعاينة: " + r.error); return; }
                 st.before = r.before; st.after = r.after;
                 compare.set(r.before, r.after);
-                previewNote.setText(String.format(Locale.US, "زمن معالجة الإطار: %d ms (دون ترميز؛ التنظيف الزمني لا يظهر في إطار واحد). %s", r.ms, r.note));
+                String time = r.crop != null
+                        ? String.format(Locale.US, "زمن معالجة القص: %d ms (+ تحليل الإطار كاملاً %d ms؛ لا يمثل زمن إطار كامل)", r.ms, r.analysisMs)
+                        : String.format(Locale.US, "زمن معالجة الإطار: %d ms", r.ms);
+                previewNote.setText(time + " (دون ترميز؛ التنظيف الزمني لا يظهر في إطار واحد؛ مقطع الـ 3 ثوانٍ يُظهر الحركة). " + r.note);
             }});
         }});
     }

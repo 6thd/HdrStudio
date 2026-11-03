@@ -111,5 +111,23 @@ kr, kb = 0.2627, 0.0593; Y = kr * pq[..., 0] + (1 - kr - kb) * pq[..., 1] + kb *
 codes = np.stack([np.round(64 + 876 * Y), np.round(512 + 896 * (pq[..., 2] - Y) / (2 * (1 - kb))), np.round(512 + 896 * (pq[..., 0] - Y) / (2 * (1 - kr)))], -1)
 meta['uhd_pq_yuv'] = save('uhd_pq_yuv', (codes / (65535 / 64)).astype(np.float32))
 np.save(os.path.join(data, 'uhd_pq_expected.npy'), pq[::-1].astype(np.float32))     # bottom-up like the textures
+
+# Same-resolution restoration with known ground truth: each review crop is degraded (2x box down +
+# bilinear up = lost detail, Gaussian noise 3/255, 8-bit quantisation) and the original is the target.
+def bilinear_up2(a):
+    h, w = a.shape[:2]
+    ys = np.clip((np.arange(2 * h) + 0.5) / 2 - 0.5, 0, h - 1); xs = np.clip((np.arange(2 * w) + 0.5) / 2 - 0.5, 0, w - 1)
+    y0 = np.floor(ys).astype(int); x0 = np.floor(xs).astype(int); y1 = np.minimum(y0 + 1, h - 1); x1 = np.minimum(x0 + 1, w - 1)
+    fy = (ys - y0)[:, None, None]; fx = (xs - x0)[None, :, None]
+    top = a[y0][:, x0] * (1 - fx) + a[y0][:, x1] * fx; bot = a[y1][:, x0] * (1 - fx) + a[y1][:, x1] * fx
+    return top * (1 - fy) + bot * fy
+drng = np.random.default_rng(2024)
+meta['degraded'] = []
+for c in meta['crops']:
+    ref = np.fromfile(os.path.join(data, c['name'] + '.f32'), '<f4').reshape(c['h'], c['w'], 4)[::-1, :, :3]
+    h2, w2 = c['h'] // 2 * 2, c['w'] // 2 * 2; ref = ref[:h2, :w2]
+    low = ref.reshape(h2 // 2, 2, w2 // 2, 2, 3).mean((1, 3))
+    deg = np.round(np.clip(bilinear_up2(low) + drng.normal(0, 3 / 255, (h2, w2, 3)), 0, 1) * 255) / 255
+    meta['degraded'].append({'deg': save('deg_' + c['name'], deg.astype(np.float32)), 'ref': save('ref_' + c['name'], ref)})
 json.dump(meta, open(os.path.join(data, 'meta.json'), 'w'), indent=1)
 print(json.dumps({k: (v if k != 'stills' else [s['name'] for s in v]) for k, v in meta.items()}, indent=1))

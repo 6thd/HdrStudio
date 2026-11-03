@@ -23,9 +23,9 @@ np.save('ref_baboon_crop.npy', R.forward(R.load_blob(sys.argv[1] + '/app/src/mai
 PY
 python3 "$H/prepare_data.py" "$W/media" "$RUN/data" > /dev/null
 python3 "$H/check.py" "$RUN/data" "$RUN/out" prep_yuv
-TESTS="compile color sr_reference sr_tiling motion temporal resize_temporal flash scenecut banding video uhd_sdr uhd_pq v0_compare stills stills_same"
+TESTS="compile color sr_reference sr_tiling motion temporal resize_temporal flash scenecut banding video uhd_sdr uhd_pq v0_compare stills stills_same preview_crop same_res_eval"
 node "$H/run.js" "$RUN/data" "$RUN/out" $TESTS          # exits non-zero if any test throws
 "$ROOT/tools/jvmtests/run.sh" "$RUN/jvm" | tee "$RUN/out/jvm_tests.log"
 export HEVC_INSPECT_CP="$RUN/jvm" HDR_MEDIA="$W/media"
-python3 "$H/check.py" "$RUN/data" "$RUN/out" jvm color sr motion temporal resize_temporal flash scenecut banding video uhd stills stills_same visual verify
+python3 "$H/check.py" "$RUN/data" "$RUN/out" jvm color sr motion temporal resize_temporal flash scenecut banding video uhd stills stills_same visual preview_crop same_res_eval verify
 echo "results: $RUN/out/report.json"

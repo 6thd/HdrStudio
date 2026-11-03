@@ -13,6 +13,7 @@ import android.provider.MediaStore;
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.core.DeviceCaps;
 import com.mojahed.hdrstudio.core.FrameRate;
+import com.mojahed.hdrstudio.core.MemoryBudget;
 import com.mojahed.hdrstudio.core.SourceInfo;
 import com.mojahed.hdrstudio.encode.AudioTrackSource;
 import com.mojahed.hdrstudio.encode.Check;
@@ -55,6 +56,7 @@ public final class ExportJob implements Runnable {
     private DeviceCaps.Enc enc;
     private EncodeConfig config;
     private boolean hdrOut;
+    private boolean pipelineMemReported;
     private final StringBuilder report = new StringBuilder();
 
     public ExportJob(Context ctx, ExportRequest req) { this.ctx = ctx.getApplicationContext(); this.req = req; }
@@ -107,6 +109,28 @@ public final class ExportJob implements Runnable {
             snap.thermal = "حرارة متوسطة";
             Thread.sleep(10);
         } else snap.thermal = "";
+    }
+
+    /** Cancel and critical-heat pause between AI tiles, so a 4K frame does not run unchecked. */
+    private void tileGate(PowerManager pm) {
+        if (cancel.get()) throw new CancellationException();
+        if (pm.getCurrentThermalStatus() >= PowerManager.THERMAL_STATUS_CRITICAL) {
+            try { thermal(pm); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new CancellationException(); }
+        }
+    }
+
+    private FramePipeline newPipeline(GlKit kit, SourceInfo s, PipelineParams p, SrEngine sr, final PowerManager pm, MemoryBudget.Plan mem) {
+        long before = kit.allocatedBytes();
+        FramePipeline fp = new FramePipeline(kit, s.width, s.height, p, sr);
+        fp.setTileGate(new FramePipeline.TileGate() {
+            @Override public void between(int done, int total) { tileGate(pm); }
+        });
+        if (!pipelineMemReported) {
+            pipelineMemReported = true;
+            report.append(String.format(Locale.US, "ذاكرة GPU للمعالجة عند الإنشاء: %d MB (المتوقع %d MB؛ التاريخ الزمني وبلاطات AI تُحجز عند أول إطار)\n",
+                    (kit.allocatedBytes() - before + (1 << 19)) >> 20, (mem.pipeline + (1 << 19)) >> 20));
+        }
+        return fp;
     }
 
     // ------------------------------------------------------------------ plan
@@ -210,6 +234,12 @@ public final class ExportJob implements Runnable {
             checkSpace(durUs);
             PipelineParams p = req.params;
             boolean yuvPath = s.isHdr() || s.bitDepth > 8;
+            MemoryBudget.Plan mem = MemoryBudget.plan(s.width, s.height, yuvPath, outW, outH, hdrOut,
+                    p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal);
+            report.append(mem.describe()).append('\n');
+            if (!mem.fits)
+                throw new IllegalStateException("الذاكرة المتاحة لا تكفي لهذه الإعدادات حتى بأصغر بلاطة AI. أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
+            final PowerManager pmFinal = pm;
 
             egl = new Egl(hdrOut);
             egl.makeCurrentOffscreen();
@@ -218,7 +248,7 @@ public final class ExportJob implements Runnable {
                 stage("تحميل نموذج AI وفحصه");
                 sr = new SrEngine(kit, ctx.getAssets());
                 if (!sr.selfTest(ctx.getAssets())) throw new IllegalStateException("AI " + sr.status);
-                p.aiTile = SrEngine.chooseTile(caps.memAvail);
+                p.aiTile = mem.tile;
                 report.append("AI: ").append(sr.status).append(" · حجم البلاطة ").append(p.aiTile).append('\n');
             }
             HdrMetadata meta = null;
@@ -231,7 +261,7 @@ public final class ExportJob implements Runnable {
             // ---------------- pass 1: exact MaxCLL / MaxFALL of the final pixels
             if (passes == 2) {
                 stage("المرحلة 1/2: قياس الإضاءة (MaxCLL/MaxFALL)");
-                pipe = new FramePipeline(kit, s.width, s.height, p, sr);
+                pipe = newPipeline(kit, s, p, sr, pmFinal, mem);
                 fs = new FrameSource(ctx, req.uri, s, yuvPath, start, end);
                 double cll = 0, fall = 0;
                 int n = 0;
@@ -287,7 +317,7 @@ public final class ExportJob implements Runnable {
             });
             ws = egl.createWindowSurface(ve.inputSurface, hdrOut);
             egl.makeCurrent(ws.surface);
-            pipe = new FramePipeline(kit, s.width, s.height, p, sr);
+            pipe = newPipeline(kit, s, p, sr, pmFinal, mem);
             fs = new FrameSource(ctx, req.uri, s, yuvPath, start, end);
             EncodeSelfTest.Result st = req.selfTest;
             Map<String, Object> u = new HashMap<>();

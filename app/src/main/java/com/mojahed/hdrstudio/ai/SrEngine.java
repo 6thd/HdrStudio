@@ -181,11 +181,4 @@ public final class SrEngine {
         }
         return total;
     }
-
-    /** Tile size from free memory: features use 2 arrays x 16 layers x (T+72)^2 x 8 bytes. */
-    public static int chooseTile(long availBytes) {
-        if (availBytes > 3L << 30) return 512;
-        if (availBytes > 1536L << 20) return 256;
-        return 128;
-    }
 }

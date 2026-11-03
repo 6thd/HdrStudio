@@ -299,6 +299,66 @@ def step_uhd():
        {'p50_err_10bit_codes': float(np.median(err)), 'p99.9_err': float(np.percentile(err, 99.9)), 'max_err': float(err.max()),
         'source_peak_nits': float(pq_dec(exp).max()), 'output_peak_nits': float(pq_dec(p).max()), 'note': 'no enhancement enabled: PQ in -> PQ out; chroma 4:4:4 in this test'})
 
+SRVGG_MAC_PER_LR_PX = 3 * 64 * 9 + 32 * 64 * 64 * 9 + 64 * 48 * 9      # conv_first + 32 body + conv_last
+
+def ssim_y(a, b):
+    """SSIM of BT.709 luma, 7x7 box window (Wang et al. constants)."""
+    k = np.array([0.2126, 0.7152, 0.0722]); x = a @ k; y = b @ k
+    def box(z):
+        c = np.cumsum(np.cumsum(np.pad(z, ((1, 0), (1, 0))), 0), 1)
+        return (c[7:, 7:] - c[:-7, 7:] - c[7:, :-7] + c[:-7, :-7]) / 49
+    mx, my = box(x), box(y); vx = box(x * x) - mx ** 2; vy = box(y * y) - my ** 2; cxy = box(x * y) - mx * my
+    c1, c2 = 0.01 ** 2, 0.03 ** 2
+    return float((((2 * mx * my + c1) * (2 * cxy + c2)) / ((mx ** 2 + my ** 2 + c1) * (vx + vy + c2))).mean())
+
+def step_same_res_eval():
+    m = json.load(open(os.path.join(DATA, 'meta.json'))); j = json.load(open(os.path.join(OUT, 'same_res_eval.json')))
+    cfgs = ['classic', 'ai100', 'ai50', 'ai25', 'model100', 'model50', 'model25']
+    table, complete = {}, True
+    os.makedirs(os.path.join(OUT, 'png'), exist_ok=True)
+    for d in m['degraded']:
+        g, r = d['deg'], d['ref']; w, h = g['w'], g['h']
+        ref = np.fromfile(os.path.join(DATA, r['name'] + '.f32'), '<f4').reshape(h, w, 4)[::-1, :, :3]
+        deg = np.fromfile(os.path.join(DATA, g['name'] + '.f32'), '<f4').reshape(h, w, 4)[::-1, :, :3]
+        row = {'degraded_input': {'psnr': psnr(deg, ref), 'ssim': ssim_y(deg, ref)}}
+        tiles = [ref, deg]
+        for c in cfgs:
+            f = 'sre_%s_%s.f32' % (g['name'], c)
+            if not os.path.exists(os.path.join(OUT, f)): complete = False; continue
+            o = rd(f, w, h)[..., :3]
+            if not np.isfinite(o).all(): complete = False
+            row[c] = {'psnr': psnr(o, ref), 'ssim': ssim_y(o, ref), 'swiftshader_ms': j[g['name'] + '_' + c]['ms']}
+            if c in ('classic', 'ai25', 'ai50', 'ai100'): tiles.append(o)
+        table[g['name']] = row
+        sep = np.ones((h, 4, 3))
+        save_png(os.path.join(OUT, 'png', 'same_res_eval_%s.png' % g['name']), np.repeat(np.repeat(np.concatenate(sum([[t, sep] for t in tiles], [])[:-1], 1), 2, 0), 2, 1))
+    mean = {c: {'psnr': float(np.mean([t[c]['psnr'] for t in table.values() if c in t])), 'ssim': float(np.mean([t[c]['ssim'] for t in table.values() if c in t]))}
+            for c in ['degraded_input'] + cfgs}
+    cost = {('ai%d' % s): {'mac_per_output_px': SRVGG_MAC_PER_LR_PX * (s / 100) ** 2,
+                           'tmac_per_4k_frame': SRVGG_MAC_PER_LR_PX * (s / 100) ** 2 * 3840 * 2160 / 1e12} for s in (100, 50, 25)}
+    ok('same_res_eval_complete', complete and len(table) == len(m['degraded']),
+       {'mean': mean, 'cost': cost, 'per_crop': table,
+        'note': 'ground truth = original crop; degradation = 2x box down + bilinear up + noise 3/255 + 8-bit. Measurement, not a pass/fail of quality.'})
+
+def step_preview_crop():
+    j = json.load(open(os.path.join(OUT, 'preview_crop.json')))
+    os.makedirs(os.path.join(OUT, 'png'), exist_ok=True)
+    for nm, v in j.items():
+        g = v['geom']; w, h = g['visW'], g['visH']
+        full = rd('pc_%s_full.f32' % nm, w, h)[..., :3]
+        crop = rd('pc_%s_crop.f32' % nm, w, h)[..., :3]
+        naive = rd('pc_%s_naive.f32' % nm, w, h)[..., :3]
+        d = np.abs(full - crop).max(); dn = np.abs(full - naive)
+        stats_ok = v.get('analysis_stats_equal_full_run', True)   # older runs used the full pipeline's own stats
+        ok('preview_crop_equals_full_frame_' + nm, d < 2e-3 and np.isfinite(crop).all() and stats_ok,
+           {'max_diff_pq': float(d), 'analysis_stats_equal_full_run': v.get('analysis_stats_equal_full_run'),
+            'naive_crop_max_diff_pq': float(dn.max()), 'naive_crop_p99_diff': float(np.percentile(dn, 99)),
+            'margin_src_px': g['margin'], 'processed_fraction_of_frame': v['processed_fraction'],
+            'tiles_full': v.get('tiles_full'), 'tiles_crop': v.get('tiles_crop')})
+        sep = np.ones((h, 4, 3))
+        save_png(os.path.join(OUT, 'png', 'preview_crop_%s.png' % nm),
+                 np.concatenate([tonemap_preview(full), sep, tonemap_preview(crop), sep, tonemap_preview(naive)], 1))
+
 def step_visual():
     # visual sheets exist for every crop (judged by eye, not by a number)
     m = json.load(open(os.path.join(DATA, 'meta.json')))
@@ -413,7 +473,9 @@ REQUIRED = ['jvm_summary_all_pass_none_missing'] + ['jvm:' + n for n in JVM_REQU
     'temporal_denoise_improves_psnr_on_moving_pan', 'temporal_no_ghost_trail_behind_fast_object', 'temporal_with_resolution_change_up_and_down',
     'flash_preserved_not_averaged_and_not_a_cut', 'scene_cut_detection_vs_ffmpeg_scene_score', 'deband_reduces_hdr_step_size',
     'maxcll_maxfall_gpu_measurement_matches_numpy', 'hdr10_file_tags_metadata_and_pixels', 'app_hevc_parser_agrees_with_ffprobe',
-    'uhd_4k_sdr_to_hdr10_runs', 'uhd_4k_hdr10_source_kept_in_pq', 'visual_comparison_sheets_rendered']
+    'uhd_4k_sdr_to_hdr10_runs', 'uhd_4k_hdr10_source_kept_in_pq', 'visual_comparison_sheets_rendered',
+    'preview_crop_equals_full_frame_classic_up15', 'preview_crop_equals_full_frame_ai_same', 'preview_crop_equals_full_frame_ai_x2_half',
+    'same_res_eval_complete']
 
 def source_fingerprint():
     import hashlib

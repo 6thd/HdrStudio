@@ -126,6 +126,9 @@ public final class GlKit {
         return new Tex(a[0], w, h, layers, true);
     }
 
+    /** Submits queued GPU work (keeps single submissions short between AI tiles). */
+    public void flush() { GLES20.glFlush(); }
+
     public void delete(Tex t) {
         if (t == null) return;
         GLES20.glDeleteTextures(1, new int[]{t.id}, 0);
