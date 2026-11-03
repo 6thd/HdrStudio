@@ -409,15 +409,21 @@ public final class MainActivity extends Activity implements JobManager.Listener 
 
     private void runPreview() {
         if (st.src == null) { toastText("اختر فيديو أولاً"); return; }
+        final ExportJob.Plan pl = plan();
+        if (pl == null || pl.config == null || pl.error != null) {
+            previewNote.setText(pl != null && pl.error != null ? pl.error : "لا توجد خطة تصدير لهذه الإعدادات.");
+            return;
+        }
         previewBtn.setEnabled(false);
         previewNote.setText("جارٍ معالجة الإطار…");
         final PipelineParams p = params();
         final boolean hdr = preset().hdr;
-        final int[] d = ExportJob.planDims(st.src, preset(), targetShort());
+        final int outW = pl.config.width, outH = pl.config.height;
+        final long memAvail = st.caps == null ? 0 : st.caps.memAvail, memTotal = st.caps == null ? 0 : st.caps.memTotal;
         final long t = posUs();
         final boolean crop = cropSwitch.isChecked();
         bg(new Runnable() { @Override public void run() {
-            final PreviewRenderer.Result r = PreviewRenderer.render(getApplicationContext(), st.uri, st.src, p, t, hdr, d[0], d[1], crop);
+            final PreviewRenderer.Result r = PreviewRenderer.render(getApplicationContext(), st.uri, st.src, p, t, hdr, outW, outH, crop, memAvail, memTotal);
             ui(new Runnable() { @Override public void run() {
                 previewBtn.setEnabled(true);
                 if (r.error != null) { previewNote.setText("فشلت المعاينة: " + r.error); return; }

@@ -1,6 +1,60 @@
-built: 2026-11-03T03:56:05Z
-javac: javac 21.0.12.1
-sources_sha256: f8ec2d44bec0b92f4e66a3607c9f8ed35a96252e2a8ff274af043946d35a6435  (sha256 of 'sha256sum' over app/src/main, sorted paths)
-classes.dex_sha256: 12e8b2326085f9c04283200b7a736b8e61fd855930f4b0d391301cd3ae26bc23
-apk_sha256: 91e4af524019f3e7d0f77ce0c1b605c18885c4b2ab6b07eb1aca4b39ad60694f
-signing: local test key (NOT the CI release key) - uninstall before installing a CI build
+built: 2026-11-03T11:00:00Z
+command: :app:clean assembleDebug assembleRelease  (javac ran on this tree; not an incremental leftover)
+branch: work/v2.2
+git_parent: a1a3c7c891ea01b4a7cbe9fb6d10e914b02634c4
+git_commit: the commit on work/v2.2 that contains this file (reported in the delivery message as full SHA)
+javac: javac 17.0.20.1
+compileSdk: 35
+minSdk: 29
+targetSdk: 34
+versionCode: 4
+versionName debug: 2.2-test
+versionName release: 2.2
+applicationId debug: com.mojahed.hdrstudio.test
+applicationId release: com.mojahed.hdrstudio
+
+# Source that was actually compiled into the APKs (not the dirty-tree build labelled 2.1)
+sources_sha256 (sha256 of path+content over app/src/main, 75 files):
+  b4772cf60513c1def05a4e01f206cf052f1dbf600154cd0e9ecbd048d1080cf0
+acceptance_source_sha256 (check.py over app/src/main/{java,assets} + tools/harness):
+  a7bfb8af649202ad498b25c2e8dd1803a72024fbea870b8bca769ce0fd89e804
+harness_source_sha256 (tools/harness, 461 files):
+  8fa3dba331943edab9d3d7ce1ee9bf4ce109843086d5e443a533adbf1ba7f806
+jvmtests_source_sha256 (tools/jvmtests):
+  1aadc9889e0dca5bd093c2bda4b2c59858c59840d2dd8c35d6ec40aa5b9bb853
+
+# Debug APK — phone pack (.test, side by side with the installed app)
+debug_apk: app/build/outputs/apk/debug/app-debug.apk
+  copy: C:\Users\ThinkPad\Documents\Cursor\_runs\v22\apk\HDR-Studio-2.2-test.apk
+  package: com.mojahed.hdrstudio.test
+  versionCode: 4
+  versionName: 2.2-test
+  size: 5242964
+  apk_sha256: 10f674ac255f797bfadd25f8810c1c044fad8e8d1edd3215f38b46497a429e3d
+  classes.dex_sha256:  88c696901cfa47d75be8e4e6610a41b3bae0d18583a08bd1f496d3cd6266786f
+  classes2.dex_sha256: 967479c9bd28131d7e281ad8b513122aa030226b2cbd18b3eae80e04e51bb081
+  classes3.dex_sha256: c0bfb38b4ff856a5d39b94185aedaca3db5cbdd978561dc3496a3e2c5064bd5f
+  classes4.dex_sha256: a6606950064fa5359997958b9c55bdbef1d7862eb462c348a0f133e22a8c96f8
+  classes5.dex_sha256: d92c771cc012b4a7f02597ea0df55430368f3aa35975882ec5a16494bc7460c3
+  classes6.dex_sha256: 48c04465e071f4e0ed2e883d2a15206c85f2941e0134f96e9f4c5a2d9c561a0b
+  (classes.dex is the app; classes2–6 are library/desugar dex files)
+
+# Release APK — same signing key, production applicationId (will NOT install over a differently signed com.mojahed.hdrstudio)
+release_apk: app/build/outputs/apk/release/app-release.apk
+  copy: C:\Users\ThinkPad\Documents\Cursor\_runs\v22\apk\HDR-Studio-2.2-release.apk
+  package: com.mojahed.hdrstudio
+  versionCode: 4
+  versionName: 2.2
+  size: 5159593
+  apk_sha256: b8411117d75a6168705b36a6d42fffed7a4e5c2dd841b150bab6731e1490722e
+  classes.dex_sha256: fef183080e5ef8585d9f187ba2ad24e382da9efcd20b6354e7c6e101f14eb163
+
+# Signing (local test key; not in the repo)
+signing: CN=HDR Studio local test build
+signer_cert_sha256: 4cc961176a1b9b25fb1c8560b42bd58398e47af8980362e05120c490dd723dc4
+signer_cert_sha1:   9ead238cf1b7bc135fc9bd66d1afef838b6fcf7b
+signer_cert_md5:    7e9b00c27188c7b97d112f1e1cd57474
+note: this is NOT the key of an already-installed com.mojahed.hdrstudio. The .test package installs side by side. Installing the release APK over a differently signed com.mojahed.hdrstudio requires uninstall (that package's settings/data are removed).
+
+rebuild: JDK 17, Android SDK 35, Gradle wrapper, HDR_KEYSTORE / HDR_KEYSTORE_PASSWORD / HDR_KEY_ALIAS / HDR_KEY_PASSWORD. Without that keystore the APK hashes will differ.
+acceptance: v2.2 desktop gate is docs/test-results/V22_ACCEPTANCE.txt (70/70). 30/30 was v2.1 only. Phone results are untested. 60fps is later.

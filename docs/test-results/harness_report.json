@@ -1,7 +1,110 @@
 {
- "source_sha256": "73d404c6b588e437066b142cd5d73dbeeb6435f12136cdda5263a31bdc680517",
- "out_dir": "/tmp/claude-0/-home-claude/4a08c38c-fe2f-5c02-80ff-0d0c04565e66/scratchpad/ci2/run_20261103_062413/out",
+ "source_sha256": "a7bfb8af649202ad498b25c2e8dd1803a72024fbea870b8bca769ce0fd89e804",
+ "out_dir": "C:\\Users\\ThinkPad\\Documents\\Cursor\\_runs\\v22\\run_20261103_132832\\out",
  "checks": {
+  "scene_cut_detection_vs_ffmpeg_scene_score": {
+   "pass": true,
+   "ffmpeg_cuts(scene>0.3)": [
+    2,
+    99,
+    155,
+    201
+   ],
+   "ours": [
+    2,
+    99,
+    155,
+    201
+   ],
+   "matched": 4,
+   "false_positive": []
+  },
+  "uhd_4k_sdr_to_hdr10_runs": {
+   "pass": true,
+   "out": [
+    3840,
+    2160
+   ],
+   "peak_nits": 531.1403198242188,
+   "mean_nits": 122.69810485839844,
+   "swiftshader_ms": 28635
+  },
+  "uhd_4k_hdr10_source_kept_in_pq": {
+   "pass": true,
+   "p50_err_10bit_codes": 0.4046337604522705,
+   "p99.9_err": 1.6398155689239502,
+   "max_err": 1.914144515991211,
+   "source_peak_nits": 811.4765014648438,
+   "output_peak_nits": 814.6012573242188,
+   "note": "no enhancement enabled: PQ in -> PQ out; chroma 4:4:4 in this test"
+  },
+  "maxcll_maxfall_gpu_measurement_matches_numpy": {
+   "pass": true,
+   "gpu_maxcll": 840.5,
+   "numpy_maxcll": 840.5679931640625,
+   "gpu_maxfall": 60.875723379629626,
+   "numpy_maxfall": 60.87479019165039
+  },
+  "hdr10_file_tags_metadata_and_pixels": {
+   "pass": true,
+   "stream": {
+    "codec_name": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "color_range": "tv",
+    "color_space": "bt2020nc",
+    "color_transfer": "smpte2084",
+    "color_primaries": "bt2020",
+    "nb_frames": "48"
+   },
+   "content_light": [
+    {
+     "side_data_type": "Content light level metadata",
+     "max_content": 841,
+     "max_average": 61
+    }
+   ],
+   "mastering": [
+    {
+     "side_data_type": "Mastering display metadata",
+     "red_x": "35400/50000",
+     "red_y": "14600/50000",
+     "green_x": "8500/50000",
+     "green_y": "39850/50000",
+     "blue_x": "6550/50000",
+     "blue_y": "2300/50000",
+     "white_point_x": "15635/50000",
+     "white_point_y": "16450/50000",
+     "min_luminance": "50/10000",
+     "max_luminance": "10000000/10000"
+    }
+   ],
+   "decoded_frames": 48,
+   "flat_patch_max_err_10bit_codes": 1.0009868502616996,
+   "natural_frame_psnr_db_after_x265": 46.552677154541016
+  },
+  "app_hevc_parser_agrees_with_ffprobe": {
+   "pass": true,
+   "app_parser": {
+    "sps": true,
+    "bitDepth": 10,
+    "primaries": 9,
+    "transfer": 16,
+    "matrix": 9,
+    "fullRange": false,
+    "mdcv": true,
+    "mdcvMaxLum": 10000000,
+    "cll": true,
+    "maxCll": 841,
+    "maxFall": 61,
+    "hdr10": true
+   },
+   "ffprobe_cll": {
+    "side_data_type": "Content light level metadata",
+    "max_content": 841,
+    "max_average": 61
+   }
+  },
   "sdr_to_hdr_expand0_is_bt2408_mapping": {
    "pass": true,
    "max_err_pq": 0.0003126665172735743,
@@ -11,15 +114,15 @@
   "ramp_e1_monotonic_midtones_kept_peak_bounded": {
    "pass": true,
    "monotonic": 1.0,
-   "max_midtone_rel_dev": 0.003113331569586906,
+   "max_midtone_rel_dev": 0.0031132518928165694,
    "peak_nits": 965.90966796875,
-   "nits_at_75pct": 101.82009696960449,
+   "nits_at_75pct": 101.82009506225586,
    "nits_at_90pct": 401.6826812744142
   },
   "ramp_e1_g22_monotonic_midtones_kept_peak_bounded": {
    "pass": true,
    "monotonic": 1.0,
-   "max_midtone_rel_dev": 0.0027776725951344414,
+   "max_midtone_rel_dev": 0.0027775948114906364,
    "peak_nits": 965.90966796875,
    "nits_at_75pct": 110.69619560241699,
    "nits_at_90pct": 433.9555023193361
@@ -34,15 +137,15 @@
   },
   "rand_hdr_e1_hue_preserved_no_negative": {
    "pass": true,
-   "max_hue_shift_rad": 0.010217130201434665,
-   "chromaticity_shift_p99": 0.0008520282690625287,
-   "peak_nits": 836.8268432617188,
+   "max_hue_shift_rad": 0.010210346540028501,
+   "chromaticity_shift_p99": 0.0008522236678382715,
+   "peak_nits": 836.8267822265625,
    "min": 0.018649417906999588
   },
   "rand_hdr_vib_hue_preserved_no_negative": {
    "pass": true,
-   "max_hue_shift_rad": 0.008862967687038426,
-   "chromaticity_shift_p99": 0.03222243692730546,
+   "max_hue_shift_rad": 0.008862976940916534,
+   "chromaticity_shift_p99": 0.03222243640697929,
    "peak_nits": 867.3814086914062,
    "min": 0.018628910183906555
   },
@@ -140,21 +243,21 @@
    "pass": true,
    "psnr_db_frames4+": {
     "off": 30.68593978881836,
-    "spatial": 33.99134826660156,
+    "spatial": 33.9913444519043,
     "temporal": 33.554115295410156,
-    "both": 35.120235443115234
+    "both": 35.12023162841797
    }
   },
   "temporal_no_ghost_trail_behind_fast_object": {
    "pass": true,
    "psnr_db_frames4+": {
-    "off": 33.994102478027344,
-    "spatial": 34.72904968261719,
-    "temporal": 35.289703369140625,
-    "both": 34.4505615234375
+    "off": 33.98978042602539,
+    "spatial": 34.77911376953125,
+    "temporal": 35.22399139404297,
+    "both": 34.41679382324219
    },
-   "trail_mae_off": 0.015821872279047966,
-   "trail_mae_temporal": 0.016247663646936417
+   "trail_mae_off": 0.015835262835025787,
+   "trail_mae_temporal": 0.01621505431830883
   },
   "temporal_with_resolution_change_up_and_down": {
    "pass": true,
@@ -162,13 +265,13 @@
     "up15": {
      "off": 32.06623077392578,
      "off_border": 32.08910369873047,
-     "temporal": 34.68391036987305,
+     "temporal": 34.68390655517578,
      "temporal_border": 34.43635559082031
     },
     "down05": {
      "off": 37.472991943359375,
      "off_border": 37.47328567504883,
-     "temporal": 38.95232391357422,
+     "temporal": 38.95232009887695,
      "temporal_border": 38.836830139160156
     }
    }
@@ -206,23 +309,6 @@
     0.0036507239108647988
    ]
   },
-  "scene_cut_detection_vs_ffmpeg_scene_score": {
-   "pass": true,
-   "ffmpeg_cuts(scene>0.3)": [
-    2,
-    99,
-    155,
-    201
-   ],
-   "ours": [
-    2,
-    99,
-    155,
-    201
-   ],
-   "matched": 4,
-   "false_positive": []
-  },
   "deband_reduces_hdr_step_size": {
    "pass": true,
    "nodeband": {
@@ -236,92 +322,6 @@
     "monotonic": false
    }
   },
-  "maxcll_maxfall_gpu_measurement_matches_numpy": {
-   "pass": true,
-   "gpu_maxcll": 840.5,
-   "numpy_maxcll": 840.568115234375,
-   "gpu_maxfall": 60.875723379629626,
-   "numpy_maxfall": 60.87471008300781
-  },
-  "hdr10_file_tags_metadata_and_pixels": {
-   "pass": true,
-   "stream": {
-    "codec_name": "hevc",
-    "profile": "Main 10",
-    "pix_fmt": "yuv420p10le",
-    "color_range": "tv",
-    "color_space": "bt2020nc",
-    "color_transfer": "smpte2084",
-    "color_primaries": "bt2020",
-    "nb_frames": "48"
-   },
-   "content_light": [
-    {
-     "side_data_type": "Content light level metadata",
-     "max_content": 841,
-     "max_average": 61
-    }
-   ],
-   "mastering": [
-    {
-     "side_data_type": "Mastering display metadata",
-     "red_x": "35400/50000",
-     "red_y": "14600/50000",
-     "green_x": "8500/50000",
-     "green_y": "39850/50000",
-     "blue_x": "6550/50000",
-     "blue_y": "2300/50000",
-     "white_point_x": "15635/50000",
-     "white_point_y": "16450/50000",
-     "min_luminance": "50/10000",
-     "max_luminance": "10000000/10000"
-    }
-   ],
-   "decoded_frames": 48,
-   "flat_patch_max_err_10bit_codes": 1.0009868502616996,
-   "natural_frame_psnr_db_after_x265": 46.550594329833984
-  },
-  "app_hevc_parser_agrees_with_ffprobe": {
-   "pass": true,
-   "app_parser": {
-    "sps": true,
-    "bitDepth": 10,
-    "primaries": 9,
-    "transfer": 16,
-    "matrix": 9,
-    "fullRange": false,
-    "mdcv": true,
-    "mdcvMaxLum": 10000000,
-    "cll": true,
-    "maxCll": 841,
-    "maxFall": 61,
-    "hdr10": true
-   },
-   "ffprobe_cll": {
-    "side_data_type": "Content light level metadata",
-    "max_content": 841,
-    "max_average": 61
-   }
-  },
-  "uhd_4k_sdr_to_hdr10_runs": {
-   "pass": true,
-   "out": [
-    3840,
-    2160
-   ],
-   "peak_nits": 531.1403198242188,
-   "mean_nits": 122.69786834716797,
-   "swiftshader_ms": 18085
-  },
-  "uhd_4k_hdr10_source_kept_in_pq": {
-   "pass": true,
-   "p50_err_10bit_codes": 0.4046337604522705,
-   "p99.9_err": 1.6398155689239502,
-   "max_err": 1.914144515991211,
-   "source_peak_nits": 811.4765014648438,
-   "output_peak_nits": 814.601318359375,
-   "note": "no enhancement enabled: PQ in -> PQ out; chroma 4:4:4 in this test"
-  },
   "visual_comparison_sheets_rendered": {
    "pass": true,
    "sheets": [
@@ -330,6 +330,862 @@
     "same_crop_lines.png",
     "same_crop_messi.png"
    ]
+  },
+  "preview_crop_equals_full_frame_classic_up15": {
+   "pass": true,
+   "max_diff_pq": 0.00048828125,
+   "analysis_stats_equal_full_run": true,
+   "naive_crop_max_diff_pq": 0.03369140625,
+   "naive_crop_p99_diff": 0.00732421875,
+   "margin_src_px": 25,
+   "processed_fraction_of_frame": 0.1618804931640625,
+   "tiles_full": 0,
+   "tiles_crop": 0
+  },
+  "preview_crop_equals_full_frame_ai_same": {
+   "pass": true,
+   "max_diff_pq": 0.0,
+   "analysis_stats_equal_full_run": true,
+   "naive_crop_max_diff_pq": 0.091796875,
+   "naive_crop_p99_diff": 0.01171875,
+   "margin_src_px": 67,
+   "processed_fraction_of_frame": 0.31640625,
+   "tiles_full": 16,
+   "tiles_crop": 9
+  },
+  "preview_crop_equals_full_frame_ai_x2_half": {
+   "pass": true,
+   "max_diff_pq": 0.0,
+   "analysis_stats_equal_full_run": true,
+   "naive_crop_max_diff_pq": 0.1722412109375,
+   "naive_crop_p99_diff": 0.034912109375,
+   "margin_src_px": 108,
+   "processed_fraction_of_frame": 0.5222320556640625,
+   "tiles_full": 4,
+   "tiles_crop": 4
+  },
+  "same_res_eval_complete": {
+   "pass": true,
+   "mean": {
+    "degraded_input": {
+     "psnr": 27.314638137817383,
+     "ssim": 0.8454942857031997
+    },
+    "classic": {
+     "psnr": 27.61574363708496,
+     "ssim": 0.850992877386578
+    },
+    "ai100": {
+     "psnr": 28.579593658447266,
+     "ssim": 0.8824294235389358
+    },
+    "ai50": {
+     "psnr": 26.52111053466797,
+     "ssim": 0.8746642525159627
+    },
+    "ai25": {
+     "psnr": 22.97614860534668,
+     "ssim": 0.7645802470723119
+    },
+    "model100": {
+     "psnr": 28.105422973632812,
+     "ssim": 0.8821151563223835
+    },
+    "model50": {
+     "psnr": 25.162399291992188,
+     "ssim": 0.861718835830247
+    },
+    "model25": {
+     "psnr": 21.30757713317871,
+     "ssim": 0.7108569246879305
+    }
+   },
+   "cost": {
+    "ai100": {
+     "mac_per_output_px": 1209024.0,
+     "tmac_per_4k_frame": 10.0281286656
+    },
+    "ai50": {
+     "mac_per_output_px": 302256.0,
+     "tmac_per_4k_frame": 2.5070321664
+    },
+    "ai25": {
+     "mac_per_output_px": 75564.0,
+     "tmac_per_4k_frame": 0.6267580416
+    }
+   },
+   "per_crop": {
+    "deg_crop_face": {
+     "degraded_input": {
+      "psnr": 29.827735900878906,
+      "ssim": 0.892828871051903
+     },
+     "classic": {
+      "psnr": 30.149717330932617,
+      "ssim": 0.8947719560855957,
+      "swiftshader_ms": 303
+     },
+     "ai100": {
+      "psnr": 31.310070037841797,
+      "ssim": 0.9165234867167761,
+      "swiftshader_ms": 63028
+     },
+     "ai50": {
+      "psnr": 30.83907127380371,
+      "ssim": 0.9199873442259521,
+      "swiftshader_ms": 7869
+     },
+     "ai25": {
+      "psnr": 27.329410552978516,
+      "ssim": 0.8561502991733332,
+      "swiftshader_ms": 2861
+     },
+     "model100": {
+      "psnr": 31.253978729248047,
+      "ssim": 0.9164360137461841,
+      "swiftshader_ms": 58907
+     },
+     "model50": {
+      "psnr": 29.097476959228516,
+      "ssim": 0.9087512310197084,
+      "swiftshader_ms": 7722
+     },
+     "model25": {
+      "psnr": 24.956748962402344,
+      "ssim": 0.8076154775593818,
+      "swiftshader_ms": 1939
+     }
+    },
+    "deg_crop_fur": {
+     "degraded_input": {
+      "psnr": 22.209016799926758,
+      "ssim": 0.6940101594145838
+     },
+     "classic": {
+      "psnr": 22.32254981994629,
+      "ssim": 0.7047303973396633,
+      "swiftshader_ms": 61
+     },
+     "ai100": {
+      "psnr": 22.8995361328125,
+      "ssim": 0.7461665004879655,
+      "swiftshader_ms": 58470
+     },
+     "ai50": {
+      "psnr": 22.543140411376953,
+      "ssim": 0.7529407821547869,
+      "swiftshader_ms": 8276
+     },
+     "ai25": {
+      "psnr": 20.096147537231445,
+      "ssim": 0.5603985849203827,
+      "swiftshader_ms": 1980
+     },
+     "model100": {
+      "psnr": 22.759475708007812,
+      "ssim": 0.7464023747344759,
+      "swiftshader_ms": 61231
+     },
+     "model50": {
+      "psnr": 22.005979537963867,
+      "ssim": 0.7473048814407458,
+      "swiftshader_ms": 7851
+     },
+     "model25": {
+      "psnr": 19.13132095336914,
+      "ssim": 0.48976702628608465,
+      "swiftshader_ms": 2521
+     }
+    },
+    "deg_crop_lines": {
+     "degraded_input": {
+      "psnr": 31.250572204589844,
+      "ssim": 0.93193195541993
+     },
+     "classic": {
+      "psnr": 31.877737045288086,
+      "ssim": 0.9407901855954359,
+      "swiftshader_ms": 84
+     },
+     "ai100": {
+      "psnr": 33.535728454589844,
+      "ssim": 0.9614811249467833,
+      "swiftshader_ms": 61593
+     },
+     "ai50": {
+      "psnr": 27.06732940673828,
+      "ssim": 0.9269872697599202,
+      "swiftshader_ms": 8361
+     },
+     "ai25": {
+      "psnr": 21.963226318359375,
+      "ssim": 0.842907407610079,
+      "swiftshader_ms": 2180
+     },
+     "model100": {
+      "psnr": 32.31251525878906,
+      "ssim": 0.9589842374811238,
+      "swiftshader_ms": 60307
+     },
+     "model50": {
+      "psnr": 24.987009048461914,
+      "ssim": 0.9009844635213627,
+      "swiftshader_ms": 8235
+     },
+     "model25": {
+      "psnr": 20.198070526123047,
+      "ssim": 0.7907991206041549,
+      "swiftshader_ms": 2043
+     }
+    },
+    "deg_crop_messi": {
+     "degraded_input": {
+      "psnr": 25.97123146057129,
+      "ssim": 0.8632061569263818
+     },
+     "classic": {
+      "psnr": 26.112966537475586,
+      "ssim": 0.8636789705256175,
+      "swiftshader_ms": 72
+     },
+     "ai100": {
+      "psnr": 26.57304573059082,
+      "ssim": 0.9055465820042182,
+      "swiftshader_ms": 60568
+     },
+     "ai50": {
+      "psnr": 25.634906768798828,
+      "ssim": 0.8987416139231915,
+      "swiftshader_ms": 9467
+     },
+     "ai25": {
+      "psnr": 22.51580810546875,
+      "ssim": 0.7988646965854523,
+      "swiftshader_ms": 2498
+     },
+     "model100": {
+      "psnr": 26.095714569091797,
+      "ssim": 0.90663799932775,
+      "swiftshader_ms": 59619
+     },
+     "model50": {
+      "psnr": 24.559133529663086,
+      "ssim": 0.8898347673391707,
+      "swiftshader_ms": 8478
+     },
+     "model25": {
+      "psnr": 20.944168090820312,
+      "ssim": 0.7552460743021006,
+      "swiftshader_ms": 2955
+     }
+    }
+   },
+   "note": "ground truth = original crop; degradation = 2x box down + bilinear up + noise 3/255 + 8-bit. Measurement, not a pass/fail of quality."
+  },
+  "jvm_summary_all_pass_none_missing": {
+   "pass": true,
+   "summary": "JVM SUMMARY pass=120 fail=0 missing=0 exit=0",
+   "log": "C:\\Users\\ThinkPad\\Documents\\Cursor\\_runs\\v22\\run_20261103_132832\\out\\jvm_tests.log"
+  },
+  "jvm:pq_203_nits": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS pq_203_nits  PQ(203)=0.5806888810416109"
+  },
+  "jvm:pq_roundtrip": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS pq_roundtrip  max rel err 2.0471820874781172E-13"
+  },
+  "jvm:bt2020_limited_10bit_white_black": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS bt2020_limited_10bit_white_black  Y white 940.000 black 64.000"
+  },
+  "jvm:encoder_matrix_compensation": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS encoder_matrix_compensation  max error 2.8040976007503993E-5 codes (float precision)"
+  },
+  "jvm:hdr_static_info_bytes": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS hdr_static_info_bytes  rx=34000 max=1000 min=50 cll=840 fall=61"
+  },
+  "jvm:unmeasured_cll_is_zero_unknown": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS unmeasured_cll_is_zero_unknown  MaxCLL/MaxFALL written as 0 when not measured"
+  },
+  "jvm:scene_cut_logic": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS scene_cut_logic  first=true same=false flash=false back=false newShot=true"
+  },
+  "jvm:mem_model_equals_pipeline_allocation": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_model_equals_pipeline_allocation  42 combinations, mismatches=0"
+  },
+  "jvm:mem_disabled_stages_allocate_nothing": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_disabled_stages_allocate_nothing  classic 1080p without temporal = 52 MB (v2.1 allocated a third source buffer, three output buffers and the motion pyramid regardless)"
+  },
+  "jvm:mem_history_at_stage_resolution": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_history_at_stage_resolution  AI path: output size; classic path: source size"
+  },
+  "jvm:mem_ai_tile_formula": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_ai_tile_formula  T=256: 34 MB (2x16 feature layers of 328^2 + 1040^2 result)"
+  },
+  "jvm:mem_tile_shrinks_with_memory": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_tile_shrinks_with_memory  1080p->4K AI+temporal, 12 GB device, free: 8192MB->512 4096MB->512 3072MB->512 2048MB->512 1536MB->64(refused) 1024MB->64(refused)"
+  },
+  "jvm:mem_large_device_gets_largest_tile": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_large_device_gets_largest_tile  ????? ??????: 918 MB (GPU 598: ?????? 353 \ufffd ????? ???? 127 \ufffd AI 118 ????? 512 \ufffd ????/????? ~320 ???????) \ufffd ????????? ???????? 4096 MB"
+  },
+  "jvm:mem_refuses_when_even_smallest_tile_cannot_fit": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_refuses_when_even_smallest_tile_cannot_fit  ????? ??????: 1166 MB (GPU 597: ?????? 462 \ufffd ????? ???? 127 \ufffd AI 7 ????? 64 \ufffd ????/????? ~570 ???????) \ufffd ????????? ???????? 200 MB \ufffd ??? ????????? ???????? \ufffd ?? ???????"
+  },
+  "jvm:mem_4k_same_size_ai_plan": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_4k_same_size_ai_plan  ????? ??????: 1277 MB (GPU 707: ?????? 462 \ufffd ????? ???? 127 \ufffd AI 118 ????? 512 \ufffd ????/????? ~570 ???????) \ufffd ????????? ???????? 2560 MB"
+  },
+  "jvm:mem_smallest_tile_over_conservative_budget_is_refused": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_smallest_tile_over_conservative_budget_is_refused  ????? ??????: 807 MB (GPU 487: ?????? 353 \ufffd ????? ???? 127 \ufffd AI 7 ????? 64 \ufffd ????/????? ~320 ???????) \ufffd ????????? ???????? 768 MB \ufffd ??? ????????? ???????? \ufffd ?? ??????? \ufffd 85% of free would have been 1305 MB"
+  },
+  "jvm:mem_preview_plan_smaller_than_export_and_includes_bitmaps": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS mem_preview_plan_smaller_than_export_and_includes_bitmaps  preview ????? ??????: 507 MB (GPU 408: ?????? 274 \ufffd ????? ???? 0 \ufffd AI 118 ????? 512 \ufffd ????/????? ~95 ??????? \ufffd ??? 4) \ufffd ????????? ???????? 2560 MB vs export ????? ??????: 1277 MB (GPU 707: ?????? 462 \ufffd ????? ???? 127 \ufffd AI 118 ????? 512 "
+  },
+  "jvm:preview_crop_geometry_java_equals_harness": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS preview_crop_geometry_java_equals_harness  432 cases, mismatches=0"
+  },
+  "jvm:preview_crop_geometry_invariants": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS preview_crop_geometry_invariants  308 crops (28 without an exact common grid -> full-frame preview), violations=0"
+  },
+  "jvm:preview_crop_4k_same_size_ai": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS preview_crop_4k_same_size_ai  src 1373,743 1094x674 -> 1094x674 vis 67,67 960x540 margin 67 (processed 9% of the frame)"
+  },
+  "jvm:preview_crop_no_exact_grid_falls_back": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS preview_crop_no_exact_grid_falls_back  1919x1077 -> 2560x1440 has no common pixel grid: full-frame preview"
+  },
+  "jvm:hdr10_stream_detected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS hdr10_stream_detected  SPS: 768x576 \ufffd luma 10-bit \ufffd chroma 10-bit \ufffd chroma_format 1 \ufffd VUI primaries=9 transfer=16 matrix=9 limited \ufffd SEI mastering: 1000 nit \ufffd SEI CLL: 841/61"
+  },
+  "jvm:hdr10_fhd_scaling_lists_bframes": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS hdr10_fhd_scaling_lists_bframes  SPS: 1920x1080 \ufffd luma 10-bit \ufffd chroma 10-bit \ufffd chroma_format 1 \ufffd VUI primaries=9 transfer=16 matrix=9 limited \ufffd SEI mastering: 1000 nit \ufffd SEI CLL: 1000/400"
+  },
+  "jvm:sdr_8bit_not_hdr": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS sdr_8bit_not_hdr  SPS: 320x240 \ufffd luma 8-bit \ufffd chroma 8-bit \ufffd chroma_format 1 \ufffd VUI ??? ??? ????? \ufffd SEI mastering: ??? ????? \ufffd SEI CLL: ??? ?????"
+  },
+  "jvm:10bit_bt709_without_sei_not_hdr10": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS 10bit_bt709_without_sei_not_hdr10  SPS: 320x240 \ufffd luma 10-bit \ufffd chroma 10-bit \ufffd chroma_format 1 \ufffd VUI primaries=1 transfer=1 matrix=1 limited \ufffd SEI mastering: ??? ????? \ufffd SEI CLL: ??? ?????"
+  },
+  "jvm:length_prefixed_framing": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS length_prefixed_framing  SPS: 768x576 \ufffd luma 10-bit \ufffd chroma 10-bit \ufffd chroma_format 1 \ufffd VUI primaries=9 transfer=16 matrix=9 limited \ufffd SEI mastering: 1000 nit \ufffd SEI CLL: 841/61"
+  },
+  "jvm:sei_injection_parsed_back": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS sei_injection_parsed_back  SPS: 640x360 \ufffd luma 10-bit \ufffd chroma 10-bit \ufffd chroma_format 1 \ufffd VUI primaries=9 transfer=16 matrix=9 limited \ufffd SEI mastering: 1000 nit \ufffd SEI CLL: 987/321"
+  },
+  "jvm:sei_injection_once_per_irap": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS sei_injection_once_per_irap  1/1 IRAPs carry exactly one 137 and one 144"
+  },
+  "jvm:emulation_prevention_roundtrip": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS emulation_prevention_roundtrip  2000 random payloads"
+  },
+  "jvm:length_prefix_not_mistaken_for_start_code": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS length_prefix_not_mistaken_for_start_code  "
+  },
+  "jvm:ramp_precision_10bit_31M": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ramp_precision_10bit_31M  coverage90=43 distinct=49 -> 10-bit"
+  },
+  "jvm:ramp_precision_10bit_7M": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ramp_precision_10bit_7M  coverage90=32 distinct=49 -> 10-bit"
+  },
+  "jvm:ramp_precision_8bit_31M": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ramp_precision_8bit_31M  coverage90=13 distinct=36 -> not 10-bit"
+  },
+  "jvm:ramp_precision_8bit_7M": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ramp_precision_8bit_7M  coverage90=16 distinct=52 -> not 10-bit"
+  },
+  "jvm:precondition_streams": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS precondition_streams  AUs 12/12 \ufffd IRAPs 3/3"
+  },
+  "jvm:c1_both_missing_inserted_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c1_both_missing_inserted_annexb  IRAP 3 \ufffd Mastering: ??????? 0 / ????? ??????? 3 \ufffd CLL: ??????? 0 / ????? ??????? 3"
+  },
+  "jvm:c2_mdcv_only_inserts_only_cll_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c2_mdcv_only_inserts_only_cll_annexb  IRAP 3 \ufffd Mastering: ??????? 3 / ????? ??????? 0 \ufffd CLL: ??????? 0 / ????? ??????? 3"
+  },
+  "jvm:c3_cll_only_inserts_only_mdcv_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c3_cll_only_inserts_only_mdcv_annexb  IRAP 3 \ufffd Mastering: ??????? 0 / ????? ??????? 3 \ufffd CLL: ??????? 3 / ????? ??????? 0"
+  },
+  "jvm:c4_both_present_correct_unchanged_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c4_both_present_correct_unchanged_annexb  IRAP 3 \ufffd Mastering: ??????? 3 / ????? ??????? 0 \ufffd CLL: ??????? 3 / ????? ??????? 0 \ufffd unchanged 12/12"
+  },
+  "jvm:c5a_encoder_cll_conflicts_rejected_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5a_encoder_cll_conflicts_rejected_annexb  ????? SEI 144 ?? access unit ????? ?? ???????? ????????: 1000/400 ????? ?? 987/321"
+  },
+  "jvm:c5b_duplicate_conflicting_rejected_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5b_duplicate_conflicting_rejected_annexb  ????? SEI 144 ?? access unit ????? ?? ???????? ????????: 500/100 ????? ?? 987/321"
+  },
+  "jvm:c5c_duplicate_identical_accepted_not_added_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5c_duplicate_identical_accepted_not_added_annexb  first AU 144x2"
+  },
+  "jvm:c5d_malformed_size_rejected_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5d_malformed_size_rejected_annexb  ????? SEI 137 ?????? ?? access unit: ??? mastering 23 ????? ?? 24"
+  },
+  "jvm:c5e_invalid_values_rejected_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5e_invalid_values_rejected_annexb  ????? SEI 137 ?????? ?? access unit: ???? ???? ? ???? ????"
+  },
+  "jvm:c5f_conflict_in_non_irap_rejected_annexb": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5f_conflict_in_non_irap_rejected_annexb  ????? SEI 144 ?? access unit ????? ?? ???????? ????????: 500/100 ????? ?? 987/321"
+  },
+  "jvm:c1_both_missing_inserted_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c1_both_missing_inserted_lengthprefixed  IRAP 3 \ufffd Mastering: ??????? 0 / ????? ??????? 3 \ufffd CLL: ??????? 0 / ????? ??????? 3"
+  },
+  "jvm:c2_mdcv_only_inserts_only_cll_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c2_mdcv_only_inserts_only_cll_lengthprefixed  IRAP 3 \ufffd Mastering: ??????? 3 / ????? ??????? 0 \ufffd CLL: ??????? 0 / ????? ??????? 3"
+  },
+  "jvm:c3_cll_only_inserts_only_mdcv_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c3_cll_only_inserts_only_mdcv_lengthprefixed  IRAP 3 \ufffd Mastering: ??????? 0 / ????? ??????? 3 \ufffd CLL: ??????? 3 / ????? ??????? 0"
+  },
+  "jvm:c4_both_present_correct_unchanged_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c4_both_present_correct_unchanged_lengthprefixed  IRAP 3 \ufffd Mastering: ??????? 3 / ????? ??????? 0 \ufffd CLL: ??????? 3 / ????? ??????? 0 \ufffd unchanged 12/12"
+  },
+  "jvm:framing_independent_result": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS framing_independent_result  Annex-B and length-prefixed give identical NAL sequences"
+  },
+  "jvm:c5a_encoder_cll_conflicts_rejected_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5a_encoder_cll_conflicts_rejected_lengthprefixed  ????? SEI 144 ?? access unit ????? ?? ???????? ????????: 1000/400 ????? ?? 987/321"
+  },
+  "jvm:c5b_duplicate_conflicting_rejected_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5b_duplicate_conflicting_rejected_lengthprefixed  ????? SEI 144 ?? access unit ????? ?? ???????? ????????: 500/100 ????? ?? 987/321"
+  },
+  "jvm:c5c_duplicate_identical_accepted_not_added_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5c_duplicate_identical_accepted_not_added_lengthprefixed  first AU 144x2"
+  },
+  "jvm:c5d_malformed_size_rejected_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5d_malformed_size_rejected_lengthprefixed  ????? SEI 137 ?????? ?? access unit: ??? mastering 23 ????? ?? 24"
+  },
+  "jvm:c5e_invalid_values_rejected_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5e_invalid_values_rejected_lengthprefixed  ????? SEI 137 ?????? ?? access unit: ???? ???? ? ???? ????"
+  },
+  "jvm:c5f_conflict_in_non_irap_rejected_lengthprefixed": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5f_conflict_in_non_irap_rejected_lengthprefixed  ????? SEI 144 ?? access unit ????? ?? ???????? ????????: 500/100 ????? ?? 987/321"
+  },
+  "jvm:c5g_codec_config_conflict_rejected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5g_codec_config_conflict_rejected  ????? SEI 137 ?? codec config ????? ?? ???????? ????????: G(13250,34500) B(7500,3000) R(34000,16000) WP(15635,16450) L(26777216,50) ????? ?? G(13250,34500) B(7500,3000) R(34000,16000) WP(15635,16450) L(10000000,50)"
+  },
+  "jvm:csd_metadata_validated_but_still_inserted_in_irap": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS csd_metadata_validated_but_still_inserted_in_irap  IRAP 1 \ufffd Mastering: ??????? 0 / ????? ??????? 1 \ufffd CLL: ??????? 0 / ????? ??????? 1 \ufffd ????? ????? ?? ?????? ??????? (hvcC)"
+  },
+  "jvm:c5h_invalid_configured_metadata_rejected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5h_invalid_configured_metadata_rejected  configured metadata invalid: MaxFALL (256) ???? ?? MaxCLL (100)"
+  },
+  "jvm:c5i_unparsable_access_unit_rejected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS c5i_unparsable_access_unit_rejected  ???? ???? HEVC ??? NAL ???? (VCL) ?? ?????? ??? ?????"
+  },
+  "jvm:inserted_payload_emulation_prevention": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS inserted_payload_emulation_prevention  min=1 escaped=true"
+  },
+  "jvm:A_black_opener_new_INCONCLUSIVE": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_black_opener_new_INCONCLUSIVE  distinct=1 range=64-64 non-mult-4=0.000"
+  },
+  "jvm:A_black_opener_v2.1_rejected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_black_opener_v2.1_rejected  v2.1 noEightBitYcbcrStage(0.25)=false -> valid 10-bit file REJECTED by v2.1"
+  },
+  "jvm:A_flat_colours_new_INCONCLUSIVE": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_flat_colours_new_INCONCLUSIVE  distinct=2 range=400-401 non-mult-4=0.014"
+  },
+  "jvm:A_colour_bars_new_not_flagged_CONSISTENT": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_colour_bars_new_not_flagged_CONSISTENT  distinct=149 range=11-949 non-mult-4=0.380"
+  },
+  "jvm:A_fade_from_black_new_INCONCLUSIVE": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_fade_from_black_new_INCONCLUSIVE  distinct=4 range=64-124 non-mult-4=0.005"
+  },
+  "jvm:A_natural_new_CONSISTENT": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_natural_new_CONSISTENT  distinct=636 range=115-897 non-mult-4=0.752"
+  },
+  "jvm:A_natural_v2.1_accepted": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_natural_v2.1_accepted  v2.1 noEightBitYcbcrStage(0.25)=true"
+  },
+  "jvm:A_natural_8bit_stage_new_SUSPECT_8BIT": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_natural_8bit_stage_new_SUSPECT_8BIT  distinct=175 range=116-912 non-mult-4=0.000"
+  },
+  "jvm:A_natural_8bit_stage_v2.1_rejected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_natural_8bit_stage_v2.1_rejected  v2.1 noEightBitYcbcrStage(0.25)=false"
+  },
+  "jvm:A_no_samples_inconclusive": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_no_samples_inconclusive  "
+  },
+  "jvm:A_hard_signalling_hdr10_pass": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_hard_signalling_hdr10_pass  10-bit \ufffd BT.2020 \ufffd PQ \ufffd Limited (????? ?? ???????? ?? ?? ???? ??????)"
+  },
+  "jvm:A_hard_signalling_8bit_fail": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_hard_signalling_8bit_fail  ??? 10-bit (8/8)"
+  },
+  "jvm:A_hard_signalling_bt709_fail": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_hard_signalling_bt709_fail  ??? ??????? ?? VUI ??? BT.2020/PQ/Limited (1/1/1 limited)"
+  },
+  "jvm:A_hard_signalling_missing_sps_fail": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS A_hard_signalling_missing_sps_fail  "
+  },
+  "jvm:B_same_config_same_key": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_same_config_same_key  st_4b549cf7755bc3d199f93c9e74eacdc4842827ad"
+  },
+  "jvm:B_bitrate_change_invalidates": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_bitrate_change_invalidates  "
+  },
+  "jvm:B_resolution_change_invalidates": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_resolution_change_invalidates  "
+  },
+  "jvm:B_fps_30_vs_29.97_invalidates": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_30_vs_29.97_invalidates  "
+  },
+  "jvm:B_fps_60_vs_59.94_distinct": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_60_vs_59.94_distinct  "
+  },
+  "jvm:B_test_version_invalidates": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_test_version_invalidates  "
+  },
+  "jvm:B_system_build_invalidates": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_system_build_invalidates  "
+  },
+  "jvm:B_mode_gop_profile_invalidate": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_mode_gop_profile_invalidate  "
+  },
+  "jvm:B_canonical_has_no_metadata_values": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_canonical_has_no_metadata_values  cfg1|hdr10|enc=c2.test.hevc.encoder|mime=video/hevc|profile=4096|1920x1080|fps=30/1|br=20000000|mode=1|gop=1.000|colour=6/6/2"
+  },
+  "jvm:B_v2.1_accepted_29.97_result_for_30fps": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_v2.1_accepted_29.97_result_for_30fps  v2.1 matches(29.97 vs 30)=true -> wrong result reused"
+  },
+  "jvm:B_v2.1_ignored_bitrate": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_v2.1_ignored_bitrate  v2.1 has no bitrate in matches(): a 20 Mbps test was reused for any bitrate"
+  },
+  "jvm:B_sample_metadata_matches_itself": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_sample_metadata_matches_itself  mastering 1000 nit \ufffd MaxCLL/MaxFALL 987/321 ????? ?? ????? ??????? ????????"
+  },
+  "jvm:B_sample_values_not_accepted_as_final_measured": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_sample_values_not_accepted_as_final_measured  MaxCLL/MaxFALL ?? ????? 987/321 ????? ?? ?????? 1180/402"
+  },
+  "jvm:B_sample_values_not_accepted_as_final_unknown": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_sample_values_not_accepted_as_final_unknown  ????? ???? MaxCLL/MaxFALL ??? ????? (987/321)"
+  },
+  "jvm:B_sample_peak_not_accepted_as_final_peak": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_sample_peak_not_accepted_as_final_peak  ???? mastering ?? ????? 10000000/50 ????? ?? 40000000/50 (0.0001 nit)"
+  },
+  "jvm:B_whole_file_irap_scan_pass": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_whole_file_irap_scan_pass  3 IRAPs"
+  },
+  "jvm:B_whole_file_irap_scan_detects_missing": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_whole_file_irap_scan_detects_missing  ??? ????? ??????: 3 ?????? ????????? 3 ??? ?????????? 0 ????? ??????? 0 ??? ?????? (???? ?????? ?? ???? ?????? 1 ??? SEI 137)"
+  },
+  "jvm:B_fps_snap_29.97": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_snap_29.97  30000/1001"
+  },
+  "jvm:B_fps_snap_30": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_snap_30  "
+  },
+  "jvm:B_fps_23.976_24_25": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_23.976_24_25  "
+  },
+  "jvm:B_fps_container_2997_125_is_ntsc_film": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_container_2997_125_is_ntsc_film  24000/1001"
+  },
+  "jvm:B_fps_nonstandard_kept": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_fps_nonstandard_kept  35/2"
+  },
+  "jvm:B_pts_no_accumulated_error": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS B_pts_no_accumulated_error  frame 30000 at 1001000000 us; float accumulation would drift 0 us"
+  },
+  "jvm:D_all_pass_measured": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_all_pass_measured  "
+  },
+  "jvm:D_no_p010_inconclusive_allowed_with_limit": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_no_p010_inconclusive_allowed_with_limit  \ufffd ??? ?????? 10-bit (???? ?????): ??? ???? [INCONCLUSIVE] \ufffd ?????? ?? ???? P010 ??? ???? ?????? ??? ??? ?????? (c2.dec)"
+  },
+  "jvm:D_not_run_blocks_export": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_not_run_blocks_export  \ufffd ??? ?????? 10-bit (???? ?????): ??? ???? [INCONCLUSIVE] \ufffd ?? ????"
+  },
+  "jvm:D_decoder_ERROR_is_fail_not_partial": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_decoder_ERROR_is_fail_not_partial  \ufffd ??? ?????? 10-bit (???? ?????): ??? [FAIL] \ufffd ??? ?? ?????? ????? ?????? \ufffd ?? ???? ??????? ??? ????? "
+  },
+  "jvm:D_decoder_TIMEOUT_is_fail_not_partial": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_decoder_TIMEOUT_is_fail_not_partial  \ufffd ??? ?????? 10-bit (???? ?????): ??? [FAIL] \ufffd ????? ???? ?? ??????? ????? ?????? \ufffd ?? ???? ??????? ??? ????? "
+  },
+  "jvm:D_8bit_ramp_fail": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_8bit_ramp_fail  \ufffd ??? ?????? 10-bit (???? ?????): ??? [FAIL] \ufffd ????? 90% ?? 15 ?????? ???? ? 26 (????? ??? x265? ?????? ???? ?? ????? ???)"
+  },
+  "jvm:D_any_hard_fail_blocks": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_any_hard_fail_blocks  "
+  },
+  "jvm:D_sdr_needs_decoder_evidence": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_sdr_needs_decoder_evidence  SDR/H.264 has no independent parser"
+  },
+  "jvm:D_json_has_three_way_verdicts": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_json_has_three_way_verdicts  {\"hdr\":true,\"exportAllowed\":true,\"checks\":[{\"what\":\"??? ???????\",\"verdict\":\"PASS\",\"detail\":\"\"},{\"what\":\"???? ???????\",\"v"
+  },
+  "jvm:D_v2.1_decoder_error_counted_as_partial_success": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_v2.1_decoder_error_counted_as_partial_success  v2.1 usable() with an unmeasured (possibly failed) pixel probe = true"
+  },
+  "jvm:D_no_fully_proven_wording": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS D_no_fully_proven_wording  0 files contain the old wording"
+  },
+  "jvm:source_settings_shared_peak_from_maxcll": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS source_settings_shared_peak_from_maxcll  srcPeak=750.0"
+  },
+  "jvm:source_settings_shared_peak_from_mastering": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS source_settings_shared_peak_from_mastering  srcPeak=4000.0"
+  },
+  "jvm:source_settings_shared_ai_blocked_on_hdr": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS source_settings_shared_ai_blocked_on_hdr  "
+  },
+  "jvm:ffmpeg_decodes_hdr_injected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffmpeg_decodes_hdr_injected  frames=12 errors=0"
+  },
+  "jvm:ffprobe_reads_sei_hdr_injected": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffprobe_reads_sei_hdr_injected {\"key_frames\": 1, \"bad_key_frames\": []}"
+  },
+  "jvm:ffmpeg_decodes_sei_case1_both_missing": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffmpeg_decodes_sei_case1_both_missing  frames=12 errors=0"
+  },
+  "jvm:ffprobe_reads_sei_sei_case1_both_missing": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffprobe_reads_sei_sei_case1_both_missing {\"key_frames\": 3, \"bad_key_frames\": []}"
+  },
+  "jvm:ffmpeg_decodes_sei_case2_mdcv_only": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffmpeg_decodes_sei_case2_mdcv_only  frames=12 errors=0"
+  },
+  "jvm:ffprobe_reads_sei_sei_case2_mdcv_only": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffprobe_reads_sei_sei_case2_mdcv_only {\"key_frames\": 3, \"bad_key_frames\": []}"
+  },
+  "jvm:ffmpeg_decodes_sei_case3_cll_only": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffmpeg_decodes_sei_case3_cll_only  frames=12 errors=0"
+  },
+  "jvm:ffprobe_reads_sei_sei_case3_cll_only": {
+   "pass": true,
+   "status": "PASS",
+   "line": "PASS ffprobe_reads_sei_sei_case3_cll_only {\"key_frames\": 3, \"bad_key_frames\": []}"
   }
  }
 }

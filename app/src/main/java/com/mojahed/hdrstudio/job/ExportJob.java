@@ -138,12 +138,7 @@ public final class ExportJob implements Runnable {
         SourceInfo s = req.src;
         PipelineParams p = req.params;
         hdrOut = req.preset.hdr;
-        p.workDomain = s.isHdr() ? 1 : 0;
-        p.outMode = hdrOut ? 0 : 1;
-        if (p.workDomain == 1 && p.ai) throw new IllegalStateException("تحسين AI غير متاح لمصدر HDR في هذا الإصدار (النموذج مدرّب على SDR)");
-        if (s.isHdr()) {
-            p.srcPeak = s.srcMaxCll > 0 ? s.srcMaxCll : s.srcMasteringPeak > 0 ? s.srcMasteringPeak : 1000f;
-        }
+        p.applySource(s, hdrOut);
         Plan pl = planOutput(caps, s, req.preset, req.targetShortSide, req.bitrateOverride);
         if (pl.error != null) throw new IllegalStateException(pl.error);
         enc = pl.enc; config = pl.config; outW = config.width; outH = config.height; bitrate = config.bitrate;
@@ -238,7 +233,7 @@ public final class ExportJob implements Runnable {
                     p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal);
             report.append(mem.describe()).append('\n');
             if (!mem.fits)
-                throw new IllegalStateException("الذاكرة المتاحة لا تكفي لهذه الإعدادات حتى بأصغر بلاطة AI. أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
+                throw new IllegalStateException("فوق الميزانية المحافظة لهذه الإعدادات (نصف الذاكرة المتاحة، وثلث الذاكرة الكلية كحد). أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
             final PowerManager pmFinal = pm;
 
             egl = new Egl(hdrOut);

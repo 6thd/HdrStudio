@@ -53,16 +53,27 @@ public class MemoryTests {
             MemoryBudget.Plan p = MemoryBudget.plan(1920, 1080, true, 3840, 2160, true, true, true, 1f, avail, 12 * GB);
             if (p.tile > prev) mono = false;
             prev = p.tile;
-            sb.append(String.format(Locale.US, "%dMB->%d%s ", mb(avail), p.tile, p.withinBudget ? "" : p.fits ? "(over budget)" : "(refused)"));
+            sb.append(String.format(Locale.US, "%dMB->%d%s ", mb(avail), p.tile, p.fits ? "" : "(refused)"));
             if (p.withinBudget && p.total() > p.budget) mono = false;
+            if (p.fits != p.withinBudget) mono = false;
         }
         check("mem_tile_shrinks_with_memory", mono, "1080p->4K AI+temporal, 12 GB device, free: " + sb.toString().trim());
         MemoryBudget.Plan big = MemoryBudget.plan(1920, 1080, true, 3840, 2160, true, true, true, 1f, 8 * GB, 12 * GB);
-        check("mem_large_device_gets_largest_tile", big.tile == 512 && big.withinBudget, big.describe());
+        check("mem_large_device_gets_largest_tile", big.tile == 512 && big.withinBudget && big.fits, big.describe());
         MemoryBudget.Plan tight = MemoryBudget.plan(3840, 2160, true, 3840, 2160, true, true, true, 1f, 400L << 20, 4 * GB);
-        check("mem_refuses_when_even_smallest_tile_cannot_fit", !tight.fits && tight.tile == 64, tight.describe());
+        check("mem_refuses_when_even_smallest_tile_cannot_fit", !tight.fits && !tight.withinBudget && tight.tile == 64, tight.describe());
         MemoryBudget.Plan uhd = MemoryBudget.plan(3840, 2160, true, 3840, 2160, true, true, true, 1f, 5 * GB, 12 * GB);
-        check("mem_4k_same_size_ai_plan", uhd.fits, uhd.describe());
+        check("mem_4k_same_size_ai_plan", uhd.fits && uhd.withinBudget, uhd.describe());
+        // previously allowed by the 85% hardLimit; conservative budget is now the operating limit
+        MemoryBudget.Plan overflow = MemoryBudget.plan(1920, 1080, true, 3840, 2160, true, true, true, 1f, 1536L << 20, 12 * GB);
+        check("mem_smallest_tile_over_conservative_budget_is_refused",
+                overflow.tile == 64 && overflow.total() > overflow.budget && overflow.total() <= overflow.hardLimit && !overflow.fits && overflow.fits == overflow.withinBudget,
+                overflow.describe() + " · 85% of free would have been " + mb(overflow.hardLimit) + " MB");
+        MemoryBudget.Plan preview = MemoryBudget.preview(3840, 2160, true, 1094, 674, 1094, 674, true, true, 1f, 960, 540, true, 5 * GB, 12 * GB);
+        MemoryBudget.Plan export = MemoryBudget.plan(3840, 2160, true, 3840, 2160, true, true, true, 1f, 5 * GB, 12 * GB);
+        check("mem_preview_plan_smaller_than_export_and_includes_bitmaps",
+                preview.fits && preview.cpu > 0 && preview.encoder == 0 && preview.history == 0 && preview.total() < export.total() && preview.tile > 0,
+                "preview " + preview.describe() + " vs export " + export.describe());
 
         // v2.1 chose the tile from free memory alone (>3 GB -> 512) without counting the frame buffers
         MemoryBudget.Plan v21 = MemoryBudget.plan(3840, 2160, true, 3840, 2160, true, true, true, 1f, 3200L << 20, 4 * GB);

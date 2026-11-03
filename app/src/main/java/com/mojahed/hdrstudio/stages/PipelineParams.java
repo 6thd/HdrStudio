@@ -23,6 +23,14 @@ public final class PipelineParams {
     // output
     public int outW, outH;
 
+    /** Source-dependent fields shared by the export and the single-frame preview. */
+    public void applySource(com.mojahed.hdrstudio.core.SourceInfo s, boolean hdrOut) {
+        workDomain = s.isHdr() ? 1 : 0;
+        outMode = hdrOut ? 0 : 1;
+        if (workDomain == 1 && ai) throw new IllegalStateException("تحسين AI غير متاح لمصدر HDR في هذا الإصدار (النموذج مدرّب على SDR)");
+        if (s.isHdr()) srcPeak = s.srcMaxCll > 0 ? s.srcMaxCll : s.srcMasteringPeak > 0 ? s.srcMasteringPeak : 1000f;
+    }
+
     public PipelineParams copy() {
         PipelineParams p = new PipelineParams();
         p.workDomain = workDomain; p.outMode = outMode; p.deband = deband; p.debandThreshold = debandThreshold; p.debandRadius = debandRadius;

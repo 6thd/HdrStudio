@@ -52,7 +52,7 @@ import java.util.Map;
  * A stored result applies only to an identical configuration, test version and system build.
  */
 public final class EncodeSelfTest {
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
     public enum Colour { PASS, CORRECTED, FAIL }
 
     public static final class Result {
@@ -82,7 +82,8 @@ public final class EncodeSelfTest {
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
             o.put("cfg", config.canonical()).put("sys", systemId).put("hdr", verdict.hdr).put("colourMode", colour.name())
-                    .put("rms", rmsCodes).put("ramp", rampCoverage90).put("sei", seiSource).put("detail", detail);
+                    .put("rms", rmsCodes).put("ramp", rampCoverage90).put("sei", seiSource).put("detail", detail)
+                    .put("gprobe", verdict.gradationProbe.name());
             JSONArray ch = new JSONArray();
             for (Check c : new Check[]{verdict.colour, verdict.containerTags, verdict.decoderTags, verdict.bitstream, verdict.metadataTransport, verdict.gradation})
                 ch.put(new JSONObject().put("v", c.verdict.name()).put("w", c.what).put("d", c.detail));
@@ -107,6 +108,7 @@ public final class EncodeSelfTest {
             }
             r.verdict.colour = c[0]; r.verdict.containerTags = c[1]; r.verdict.decoderTags = c[2];
             r.verdict.bitstream = c[3]; r.verdict.metadataTransport = c[4]; r.verdict.gradation = c[5];
+            r.verdict.gradationProbe = PathTestVerdict.PixelProbe.valueOf(o.optString("gprobe", "NOT_RUN"));
             JSONArray cm = o.getJSONArray("comp"); for (int i = 0; i < 9; i++) r.comp[i] = (float) cm.getDouble(i);
             JSONArray f = o.getJSONArray("off"); for (int i = 0; i < 3; i++) r.compOffset[i] = (float) f.getDouble(i);
             return r;
@@ -194,7 +196,7 @@ public final class EncodeSelfTest {
                 v.bitstream = Hdr10FileCheck.signalling(fin.bitstream);
                 Check t = Hdr10FileCheck.finalMetadata(fin.bitstream, fin.meta, fin.scan);
                 v.metadataTransport = Check.restore(t.verdict, "نقل بيانات HDR الثابتة (قيم نموذجية 1000 nit · 987/321)", t.detail);
-                v.gradation = PathTestVerdict.gradation(fin.pixels.status, fin.pixels.minCoverage90, fin.pixels.note);
+                v.setGradation(fin.pixels.status, fin.pixels.minCoverage90, fin.pixels.note);
                 r.rampCoverage90 = fin.pixels.minCoverage90;
                 r.seiSource = fin.seiSource;
             }

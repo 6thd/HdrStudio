@@ -18,6 +18,7 @@ public final class PathTestVerdict {
     public enum PixelProbe { MEASURED, UNSUPPORTED, ERROR, TIMEOUT, NOT_RUN }
 
     public boolean hdr;
+    public PixelProbe gradationProbe = PixelProbe.NOT_RUN;
     public Check colour = Check.fail("دقة الألوان", "لم يُقس"),
             containerTags = Check.fail("وسوم الحاوية", "لم تُقرأ"),
             decoderTags = Check.inconclusive("وسوم المفكك (من البتستريم فقط)", "لم تُقرأ"),
@@ -44,12 +45,19 @@ public final class PathTestVerdict {
         }
     }
 
-    public boolean gradationUnmeasurable() { return gradation.verdict == Check.Verdict.INCONCLUSIVE; }
+    /** Records the probe status and the check together so exportAllowed can tell P010-unsupported from NOT_RUN. */
+    public void setGradation(PixelProbe status, int coverage90, String note) {
+        gradationProbe = status;
+        gradation = gradation(status, coverage90, note);
+    }
+
+    /** Only "no P010 output" is an allowed INCONCLUSIVE; NOT_RUN is not. */
+    public boolean gradationUnmeasurable() { return gradationProbe == PixelProbe.UNSUPPORTED; }
 
     public boolean exportAllowed() {
         if (!colour.passed() || !containerTags.passed() || decoderTags.failed()) return false;
         if (!hdr) return decoderTags.passed();          // SDR (also H.264): no independent parser -> decoder evidence needed
-        return bitstream.passed() && metadataTransport.passed() && !gradation.failed();
+        return bitstream.passed() && metadataTransport.passed() && (gradation.passed() || gradationProbe == PixelProbe.UNSUPPORTED);
     }
 
     public List<Check> all() {

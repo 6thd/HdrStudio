@@ -447,8 +447,10 @@ JVM_REQUIRED = [
     'c1_both_missing_inserted_lengthprefixed', 'c2_mdcv_only_inserts_only_cll_annexb', 'c3_cll_only_inserts_only_mdcv_annexb',
     'c4_both_present_correct_unchanged_annexb', 'c5a_encoder_cll_conflicts_rejected_annexb', 'c5b_duplicate_conflicting_rejected_annexb',
     'framing_independent_result', 'ffmpeg_decodes_sei_case1_both_missing', 'ffprobe_reads_sei_sei_case2_mdcv_only',
-    'ffprobe_reads_sei_sei_case3_cll_only', 'D_decoder_ERROR_is_fail_not_partial', 'D_decoder_TIMEOUT_is_fail_not_partial',
-    'D_v2.1_decoder_error_counted_as_partial_success', 'D_no_fully_proven_wording']
+    'ffprobe_reads_sei_sei_case3_cll_only',     'D_decoder_ERROR_is_fail_not_partial', 'D_decoder_TIMEOUT_is_fail_not_partial',
+    'D_not_run_blocks_export', 'D_v2.1_decoder_error_counted_as_partial_success', 'D_no_fully_proven_wording',
+    'source_settings_shared_peak_from_maxcll', 'source_settings_shared_peak_from_mastering', 'source_settings_shared_ai_blocked_on_hdr',
+    'mem_smallest_tile_over_conservative_budget_is_refused', 'mem_preview_plan_smaller_than_export_and_includes_bitmaps']
 
 def step_jvm():
     """Records every line of this run's JVM test log (tools/jvmtests/run.sh) as its own check."""

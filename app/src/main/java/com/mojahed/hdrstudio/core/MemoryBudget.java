@@ -16,17 +16,20 @@ public final class MemoryBudget {
     public static final long AI_WEIGHTS = tex(576, 34 * 16);
 
     public static final class Plan {
-        public long input, pipeline, history, aiFixed, aiTiles, decoder, encoder, budget, hardLimit;
+        public long input, pipeline, history, aiFixed, aiTiles, scratch, cpu, decoder, encoder, budget, hardLimit;
         public int tile;            // 0 = no AI
+        /** Conservative budget is the operating limit. hardLimit (85% of free RAM) is reported only, never a permission. */
         public boolean withinBudget, fits;
+        public boolean analysis;    // preview: whole-frame statistics pass is included
 
-        public long total() { return input + pipeline + history + aiFixed + aiTiles + decoder + encoder; }
-        public long gpu() { return input + pipeline + history + aiFixed + aiTiles; }
+        public long total() { return input + pipeline + history + aiFixed + aiTiles + scratch + cpu + decoder + encoder; }
+        public long gpu() { return input + pipeline + history + aiFixed + aiTiles + scratch; }
 
         public String describe() {
-            return String.format(Locale.US, "ذاكرة متوقعة: %d MB (GPU %d: معالجة %d · تاريخ زمني %d · AI %d%s · مفكك/مرمّز ~%d تقديراً) · الميزانية %d MB%s",
+            return String.format(Locale.US, "ذاكرة متوقعة: %d MB (GPU %d: معالجة %d · تاريخ زمني %d · AI %d%s · مفكك/مرمّز ~%d تقديراً%s) · الميزانية المحافظة %d MB%s",
                     mb(total()), mb(gpu()), mb(input + pipeline), mb(history), mb(aiFixed + aiTiles), tile > 0 ? " بلاطة " + tile : "",
-                    mb(decoder + encoder), mb(budget), withinBudget ? "" : fits ? " · فوق الميزانية المحافظة (أصغر بلاطة)" : " · لا تكفي الذاكرة");
+                    mb(decoder + encoder), cpu > 0 ? " · صور " + mb(cpu) : "",
+                    mb(budget), fits ? "" : " · فوق الميزانية المحافظة — لن يُشغَّل");
         }
     }
 
@@ -86,8 +89,49 @@ public final class MemoryBudget {
         p.history = history(srcW, srcH, outW, outH, temporal, ai);
         p.decoder = decoderEstimate(srcW, srcH, srcTenBit);
         p.encoder = encoderEstimate(outW, outH, outTenBit);
+        chooseTile(p, ai, memAvail, memTotal);
+        return p;
+    }
+
+    /**
+     * Peak RAM of a single-frame preview (no encoder, no temporal history). The decoded source
+     * texture lives throughout. A whole-frame analysis pass, if requested, is released before the
+     * process pipeline, so the two do not add. 8-bit readback and the two bitmaps are included.
+     * Analysis is dropped when it alone would exceed the conservative budget (the crop then uses
+     * its own statistics; that is no longer identical to a full-frame run).
+     */
+    public static Plan preview(int srcW, int srcH, boolean srcTenBit,
+                               int procW, int procH, int procOutW, int procOutH,
+                               boolean wantAnalysis, boolean ai, float aiWorkScale,
+                               int visW, int visH, boolean hdrDisplay,
+                               long memAvail, long memTotal) {
+        Plan p = new Plan();
+        p.input = tex(srcW, srcH);
+        p.decoder = decoderEstimate(srcW, srcH, srcTenBit) * 4 / 14;   // a seek holds fewer buffers than a long export
+        p.cpu = 4L * visW * visH * 2;                                  // before/after ARGB bitmaps
+        long analysisPipe = wantAnalysis ? pipeline(srcW, srcH, srcW, srcH, false, false, 1f) : 0;
+        long processPipe = pipeline(procW, procH, procOutW, procOutH, false, ai, aiWorkScale);
+        boolean cropped = procW != srcW || procH != srcH || procOutW != visW || procOutH != visH;
+        p.scratch = (cropped ? tex(procW, procH) + tex(visW, visH) : 0) + 4L * visW * visH   // process input crop + vis crop + RGBA8 readback
+                + (hdrDisplay ? tex(visW, visH) : 0);
+        p.pipeline = processPipe;
+        chooseTile(p, ai, memAvail, memTotal);
+        p.analysis = false;
+        if (wantAnalysis && analysisPipe > 0) {
+            long saved = p.pipeline;
+            p.pipeline = Math.max(saved, analysisPipe);
+            if (p.total() <= p.budget) p.analysis = true;
+            else p.pipeline = saved;   // drop whole-frame statistics so the crop itself can still run
+        }
+        p.withinBudget = p.total() <= p.budget;
+        p.fits = p.withinBudget;
+        return p;
+    }
+
+    /** Conservative budget is the operating limit. 85% of free RAM is recorded, not a second gate. */
+    static void chooseTile(Plan p, boolean ai, long memAvail, long memTotal) {
         p.budget = budget(memAvail, memTotal);
-        p.hardLimit = memAvail * 85 / 100;
+        p.hardLimit = memAvail > 0 ? memAvail * 85 / 100 : 0;
         if (ai) {
             p.aiFixed = AI_WEIGHTS;
             p.tile = TILES[TILES.length - 1];
@@ -95,7 +139,6 @@ public final class MemoryBudget {
             p.aiTiles = aiTile(p.tile);
         }
         p.withinBudget = p.total() <= p.budget;
-        p.fits = p.total() <= p.hardLimit;
-        return p;
+        p.fits = p.withinBudget;
     }
 }

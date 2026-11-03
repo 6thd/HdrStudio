@@ -1,0 +1,45 @@
+HDR Studio v2.2 desktop acceptance
+run: C:\Users\ThinkPad\Documents\Cursor\_runs\v22\run_20261103_132832
+gate: REQUIRED 70 · present 70 · failed 0 · missing 0
+ALL REQUIRED CHECKS PASS
+report source_sha256: a7bfb8af649202ad498b25c2e8dd1803a72024fbea870b8bca769ce0fd89e804
+JVM: pass=120 fail=0 missing=0 exit=0  (re-run after tools/jvmtests/run.sh Windows @list path fix; GPU/node tests were not re-run)
+
+Renderer: SwiftShader (desktop), not a phone GPU. Encode path in the harness uses libx265, not the device MediaCodec.
+
+Degraded-crop same-res eval (ground truth = original crop; degradation = 2× box down + bilinear up + noise 3/255 + 8-bit).
+Measurement, not a quality pass/fail. classic = ×1 spatial (no SR). ai100 = SRVGG ×4 at workScale 1 then back to the same size. tiles=4 means four 128px SR tiles.
+
+Mean vs original:
+  degraded input  PSNR 27.31  SSIM 0.845
+  classic ×1      PSNR 27.62  SSIM 0.851
+  ai100 ×4        PSNR 28.58  SSIM 0.882
+  ai50            PSNR 26.52  SSIM 0.875
+  ai25            PSNR 22.98  SSIM 0.765
+Cost TMAC / 4K frame: ai100 10.03 · ai50 2.51 · ai25 0.63
+
+Per crop (PSNR vs original / SwiftShader ms / tiles):
+  face   degraded 29.83 | classic 30.15 / 303ms / 0 | ai100 31.31 / 63028ms / 4 | ai50 30.84 / 7869ms / 1 | ai25 27.33 / 2861ms / 1
+  fur    degraded 22.21 | classic 22.32 / 61ms  / 0 | ai100 22.90 / 58470ms / 4 | ai50 22.54 / 8276ms / 1 | ai25 20.10 / 1980ms / 1
+  lines  degraded 31.25 | classic 31.88 / 84ms  / 0 | ai100 33.54 / 61593ms / 4 | ai50 27.07 / 8361ms / 1 | ai25 21.96 / 2180ms / 1
+  messi  degraded 25.97 | classic 26.11 / 72ms  / 0 | ai100 26.57 / 60568ms / 4 | ai50 25.63 / 9467ms / 1 | ai25 22.52 / 2498ms / 1
+
+Preview crop vs full-frame (same spatial settings, temporal off):
+  classic_up15  max Δ PQ 0.0005  PASS
+  ai_same       max Δ PQ 0.0000  PASS
+  ai_x2_half    max Δ PQ 0.0000  PASS
+
+4K: uhd_4k_sdr_to_hdr10_runs PASS (3840×2160, SwiftShader 28635 ms) · uhd_4k_hdr10_source_kept_in_pq PASS
+
+Review-note checks in the 70:
+  mem_smallest_tile_over_conservative_budget_is_refused PASS
+  mem_preview_plan_smaller_than_export_and_includes_bitmaps PASS
+  source_settings_shared_peak_from_maxcll / mastering / ai_blocked_on_hdr PASS
+  D_not_run_blocks_export PASS
+
+Not run:
+  - phone / device MediaCodec / P010 on silicon (this pack is for that)
+  - 60 fps (explicitly later)
+  - GPU/node harness was not repeated after the JVM run.sh path fix (that file is not in the APK and does not change GLSL)
+
+30/30 remains v2.1 only.

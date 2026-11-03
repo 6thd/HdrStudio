@@ -1,4 +1,6 @@
 import com.mojahed.hdrstudio.core.FrameRate;
+import com.mojahed.hdrstudio.core.SourceInfo;
+import com.mojahed.hdrstudio.stages.PipelineParams;
 import com.mojahed.hdrstudio.encode.Check;
 import com.mojahed.hdrstudio.encode.EncodeConfig;
 import com.mojahed.hdrstudio.encode.Hdr10FileCheck;
@@ -163,19 +165,22 @@ public class NotesTests {
 
         // ================= D: verdicts per property, errors are not partial successes
         PathTestVerdict v = allPass();
-        v.gradation = PathTestVerdict.gradation(PathTestVerdict.PixelProbe.MEASURED, 34, "");
+        v.setGradation(PathTestVerdict.PixelProbe.MEASURED, 34, "");
         check("D_all_pass_measured", v.exportAllowed() && v.gradation.passed() && v.summary().contains("اجتاز اختبار دقة التدرج بهذه الإعدادات"), "");
         PathTestVerdict u = allPass();
-        u.gradation = PathTestVerdict.gradation(PathTestVerdict.PixelProbe.UNSUPPORTED, -1, "(c2.dec)");
+        u.setGradation(PathTestVerdict.PixelProbe.UNSUPPORTED, -1, "(c2.dec)");
         check("D_no_p010_inconclusive_allowed_with_limit", u.gradation.verdict == Check.Verdict.INCONCLUSIVE && u.exportAllowed()
                 && u.summary().contains("لم تُقس على هذا الجهاز"), u.gradation.line());
+        PathTestVerdict nr = allPass();
+        check("D_not_run_blocks_export", !nr.exportAllowed() && nr.gradationProbe == PathTestVerdict.PixelProbe.NOT_RUN
+                && nr.gradation.verdict == Check.Verdict.INCONCLUSIVE, nr.gradation.line());
         for (PathTestVerdict.PixelProbe p : new PathTestVerdict.PixelProbe[]{PathTestVerdict.PixelProbe.ERROR, PathTestVerdict.PixelProbe.TIMEOUT}) {
             PathTestVerdict e = allPass();
-            e.gradation = PathTestVerdict.gradation(p, -1, "");
+            e.setGradation(p, -1, "");
             check("D_decoder_" + p + "_is_fail_not_partial", e.gradation.failed() && !e.exportAllowed(), e.gradation.line());
         }
         PathTestVerdict lo = allPass();
-        lo.gradation = PathTestVerdict.gradation(PathTestVerdict.PixelProbe.MEASURED, 15, "");
+        lo.setGradation(PathTestVerdict.PixelProbe.MEASURED, 15, "");
         check("D_8bit_ramp_fail", lo.gradation.failed() && !lo.exportAllowed(), lo.gradation.line());
         PathTestVerdict bs = allPass(); bs.bitstream = Check.fail("البتستريم", "8-bit");
         PathTestVerdict mt2 = allPass(); mt2.metadataTransport = Check.fail("نقل", "x");
@@ -202,6 +207,16 @@ public class NotesTests {
             }).count();
         }
         check("D_no_fully_proven_wording", hits == 0, hits + " files contain the old wording");
+        SourceInfo src = new SourceInfo();
+        src.colorTransfer = 6; src.srcMaxCll = 750; src.srcMasteringPeak = 4000;
+        PipelineParams pp = new PipelineParams();
+        pp.applySource(src, true);
+        check("source_settings_shared_peak_from_maxcll", pp.workDomain == 1 && pp.outMode == 0 && pp.srcPeak == 750f, "srcPeak=" + pp.srcPeak);
+        src.srcMaxCll = 0; pp.applySource(src, true);
+        check("source_settings_shared_peak_from_mastering", pp.srcPeak == 4000f, "srcPeak=" + pp.srcPeak);
+        pp.ai = true; boolean threw = false;
+        try { pp.applySource(src, true); } catch (IllegalStateException e) { threw = true; }
+        check("source_settings_shared_ai_blocked_on_hdr", threw, "");
 
         System.out.println(fails == 0 ? "ALL NOTES TESTS PASS" + (missing > 0 ? " (" + missing + " MISSING)" : "") : fails + " FAILED");
         System.exit(fails == 0 ? 0 : 1);
