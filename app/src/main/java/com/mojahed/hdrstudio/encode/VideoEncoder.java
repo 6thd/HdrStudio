@@ -8,6 +8,7 @@ import android.os.HandlerThread;
 import android.view.Surface;
 
 import com.mojahed.hdrstudio.core.DeviceCaps;
+import com.mojahed.hdrstudio.core.FrameRate;
 
 import java.nio.ByteBuffer;
 
@@ -15,18 +16,9 @@ import java.nio.ByteBuffer;
  * Surface-input video encoder running in asynchronous mode on its own thread, so draining the
  * output never depends on the GL thread (no swap/drain deadlock, real back-pressure: the GL
  * thread blocks in eglSwapBuffers only while the encoder is busy, never forever).
+ * Configured only from an {@link EncodeConfig} - the same description the path test ran with.
  */
 public final class VideoEncoder {
-    public static final class Config {
-        public int width, height;
-        public float fps;
-        public long bitrate;
-        public boolean hdr;              // HEVC Main10 + BT.2020/PQ + static metadata
-        public String mime;
-        public float iFrameSec = 1f;
-        public HdrMetadata meta;         // hdr only
-    }
-
     public interface Listener { void onSample(MediaCodec.BufferInfo info); }
 
     private final MediaCodec codec;
@@ -37,19 +29,22 @@ public final class VideoEncoder {
     private final Object eosLock = new Object();
     public final Surface inputSurface;
     public final String codecName;
+    public final EncodeConfig config;
     public final MediaFormat configured;
     public volatile long encodedFrames;
-    /** Key frames into which the app inserted the HDR10 SEI because the encoder had not written it. */
-    public volatile long seiInjectedFrames, seiFromEncoderFrames;
-    private final byte[] hdrSei;
+    /** HEVC HDR10 only: validates encoder-written SEI 137/144 and adds the missing ones on IRAPs. */
+    public final HdrSeiGuard seiGuard;
     private Listener listener;
 
-    public VideoEncoder(DeviceCaps.Enc enc, Config c, MuxerSink mux) throws Exception {
+    public VideoEncoder(DeviceCaps.Enc enc, EncodeConfig c, HdrMetadata meta, MuxerSink mux) throws Exception {
+        if (!enc.name.equals(c.encoder)) throw new IllegalArgumentException("config is for " + c.encoder + ", not " + enc.name);
+        if (c.hdr && meta == null) throw new IllegalArgumentException("HDR10 needs metadata");
         this.mux = mux;
         codecName = enc.name;
-        MediaFormat f = buildFormat(enc, c);
+        config = c;
+        MediaFormat f = buildFormat(c, meta);
         configured = f;
-        hdrSei = c.hdr && c.meta != null && c.mime.equals(DeviceCaps.HEVC) ? c.meta.toSeiNal() : null;
+        seiGuard = c.hdr && c.mime.equals(DeviceCaps.HEVC) ? new HdrSeiGuard(meta) : null;
         codec = MediaCodec.createByCodecName(enc.name);
         thread = new HandlerThread("encoder-out");
         thread.start();
@@ -58,29 +53,29 @@ public final class VideoEncoder {
             @Override public void onOutputBufferAvailable(MediaCodec mc, int i, MediaCodec.BufferInfo info) {
                 try {
                     ByteBuffer b = mc.getOutputBuffer(i);
-                    boolean config = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
-                    if (!config && info.size > 0 && b != null) {
+                    boolean cfg = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+                    if (info.size > 0 && b != null) {
                         b.position(info.offset); b.limit(info.offset + info.size);
-                        if (hdrSei != null && (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0) {
-                            // HDR10 static metadata must be in the bitstream (SEI 137/144) on every IRAP.
-                            // Many encoders write it from KEY_HDR_STATIC_INFO; if this one did not, insert it.
+                        if (seiGuard != null) {
                             byte[] au = new byte[info.size];
                             b.get(au);
                             b.position(info.offset);
-                            if (HevcBitstream.hasMdcv(au)) seiFromEncoderFrames++;
+                            if (cfg) seiGuard.onCodecConfig(au);
                             else {
-                                byte[] withSei = HevcBitstream.insertBeforeFirstVcl(au, hdrSei);
-                                if (withSei == null) throw new IllegalStateException("تعذر إدراج SEI في إطار HEVC (صيغة غير متوقعة)");
-                                ByteBuffer nb = ByteBuffer.allocateDirect(withSei.length);
-                                nb.put(withSei).flip();
-                                b = nb;
-                                info.set(0, withSei.length, info.presentationTimeUs, info.flags);
-                                seiInjectedFrames++;
+                                byte[] out = seiGuard.onAccessUnit(au);
+                                if (out != au) {
+                                    ByteBuffer nb = ByteBuffer.allocateDirect(out.length);
+                                    nb.put(out).flip();
+                                    b = nb;
+                                    info.set(0, out.length, info.presentationTimeUs, info.flags);
+                                }
                             }
                         }
-                        VideoEncoder.this.mux.writeVideo(b, info);
-                        encodedFrames++;
-                        if (listener != null) listener.onSample(info);
+                        if (!cfg) {
+                            VideoEncoder.this.mux.writeVideo(b, info);
+                            encodedFrames++;
+                            if (listener != null) listener.onSample(info);
+                        }
                     }
                     mc.releaseOutputBuffer(i, false);
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) signalEos();
@@ -96,6 +91,15 @@ public final class VideoEncoder {
                     copyIfMissing(of, MediaFormat.KEY_COLOR_RANGE);
                     if (configured.containsKey(MediaFormat.KEY_HDR_STATIC_INFO) && !of.containsKey(MediaFormat.KEY_HDR_STATIC_INFO))
                         of.setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, configured.getByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO));
+                    if (seiGuard != null) {
+                        for (String k : new String[]{"csd-0", "csd-1", "csd-2"}) {
+                            if (!of.containsKey(k)) continue;
+                            ByteBuffer cb = of.getByteBuffer(k).duplicate();
+                            byte[] csd = new byte[cb.remaining()];
+                            cb.get(csd);
+                            seiGuard.onCodecConfig(csd);
+                        }
+                    }
                     VideoEncoder.this.mux.onVideoFormat(of);
                 } catch (Throwable t) { fail(t); }
             }
@@ -116,27 +120,35 @@ public final class VideoEncoder {
 
     public void setListener(Listener l) { listener = l; }
 
-    public static MediaFormat buildFormat(DeviceCaps.Enc enc, Config c) {
+    /**
+     * The encode configuration for this encoder: size aligned down to the encoder's alignment, the
+     * bitrate clamped to its range, VBR when supported, the HDR10 profile when declared.
+     */
+    public static EncodeConfig plan(DeviceCaps.Enc enc, boolean hdr, int w, int h, FrameRate fps, long requestedBitrate, float iFrameSec) {
+        int wa = Math.max(2, enc.wAlign), ha = Math.max(2, enc.hAlign);
+        int aw = Math.max(wa, w / wa * wa), ah = Math.max(ha, h / ha * ha);
+        int mode = enc.caps.getEncoderCapabilities().isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                ? MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR : EncodeConfig.MODE_DEFAULT;
+        int profile = hdr ? (enc.hdr10Profile ? MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 : MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
+                : enc.mime.equals(DeviceCaps.AVC) ? MediaCodecInfo.CodecProfileLevel.AVCProfileHigh : -1;
+        return new EncodeConfig(hdr, enc.name, enc.mime, profile, aw, ah, fps, enc.clampBitrate(requestedBitrate), mode, iFrameSec,
+                hdr ? MediaFormat.COLOR_STANDARD_BT2020 : MediaFormat.COLOR_STANDARD_BT709,
+                hdr ? MediaFormat.COLOR_TRANSFER_ST2084 : MediaFormat.COLOR_TRANSFER_SDR_VIDEO,
+                MediaFormat.COLOR_RANGE_LIMITED);
+    }
+
+    public static MediaFormat buildFormat(EncodeConfig c, HdrMetadata meta) {
         MediaFormat f = MediaFormat.createVideoFormat(c.mime, c.width, c.height);
         f.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-        f.setInteger(MediaFormat.KEY_BIT_RATE, enc.clampBitrate(c.bitrate));
-        f.setFloat(MediaFormat.KEY_FRAME_RATE, c.fps);
+        f.setInteger(MediaFormat.KEY_BIT_RATE, c.bitrate);
+        f.setFloat(MediaFormat.KEY_FRAME_RATE, (float) c.fps.fps());
         f.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, c.iFrameSec);
-        if (enc.caps.getEncoderCapabilities().isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR))
-            f.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR);
-        if (c.hdr) {
-            f.setInteger(MediaFormat.KEY_PROFILE, enc.hdr10Profile ? MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10
-                    : MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10);
-            f.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT2020);
-            f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_ST2084);
-            f.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
-            if (c.meta != null) f.setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, c.meta.toStaticInfo());
-        } else {
-            if (c.mime.equals(DeviceCaps.AVC)) f.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh);
-            f.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709);
-            f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
-            f.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED);
-        }
+        if (c.bitrateMode != EncodeConfig.MODE_DEFAULT) f.setInteger(MediaFormat.KEY_BITRATE_MODE, c.bitrateMode);
+        if (c.profile >= 0) f.setInteger(MediaFormat.KEY_PROFILE, c.profile);
+        f.setInteger(MediaFormat.KEY_COLOR_STANDARD, c.colorStandard);
+        f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, c.colorTransfer);
+        f.setInteger(MediaFormat.KEY_COLOR_RANGE, c.colorRange);
+        if (c.hdr && meta != null) f.setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, meta.toStaticInfo());
         return f;
     }
 

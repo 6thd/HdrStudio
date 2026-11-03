@@ -240,65 +240,121 @@ public final class HevcBitstream {
         return o.toByteArray();
     }
 
-    private static void put16(ByteArrayOutputStream o, int v) { o.write((v >> 8) & 0xFF); o.write(v & 0xFF); }
-    private static void put32(ByteArrayOutputStream o, long v) { put16(o, (int) (v >>> 16)); put16(o, (int) (v & 0xFFFF)); }
+    // ------------------------------------------------------------------ access-unit inspection (prefix SEI)
+    /** NAL type range of IRAP pictures (BLA, IDR, CRA, reserved IRAP). */
+    public static boolean isIrapType(int t) { return t >= 16 && t <= 23; }
+
+    /** One NAL unit inside an access-unit buffer. start = first byte of its start code / length field. */
+    public static final class NalRef {
+        public final int start, header, end, type;
+        NalRef(int start, int header, int end, int type) { this.start = start; this.header = header; this.end = end; this.type = type; }
+    }
 
     /**
-     * Prefix SEI NAL (Annex-B, with 4-byte start code) carrying mastering display colour volume
-     * (payload 137, primaries in G, B, R order, units 0.00002 / 0.0001 cd/m2) and content light
-     * level (payload 144; 0 = unknown).
+     * Prefix part of an access unit: every NAL unit before the first VCL NAL unit, and the first
+     * VCL NAL unit itself (last element), which is where H.265 places prefix SEI. Scanning stops at
+     * the first VCL NAL, so the slice data is not walked. Framing: Annex-B (3- or 4-byte start
+     * codes) or 4-byte length prefixes; returns null if there is no VCL NAL unit.
      */
-    public static byte[] buildHdr10Sei(int[] gbrXY, int whiteX, int whiteY, long maxLum, long minLum, int maxCll, int maxFall) {
+    public static List<NalRef> prefixNals(byte[] au) { return prefixNals(au, isLengthPrefixed(au)); }
+
+    public static List<NalRef> prefixNals(byte[] au, boolean lengthPrefixed) {
+        List<NalRef> out = new ArrayList<>();
+        if (lengthPrefixed) {
+            int i = 0;
+            while (i + 4 <= au.length) {
+                int n = ((au[i] & 0xFF) << 24) | ((au[i + 1] & 0xFF) << 16) | ((au[i + 2] & 0xFF) << 8) | (au[i + 3] & 0xFF);
+                if (n < 2 || i + 4 + n > au.length) return null;
+                int t = (au[i + 4] >> 1) & 0x3F;
+                out.add(new NalRef(i, i + 4, i + 4 + n, t));
+                if (t < 32) return out;
+                i += 4 + n;
+            }
+            return null;
+        }
+        int i = 0, hdr = -1, st = -1;
+        while (i + 2 < au.length) {
+            if (au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1) {
+                int s = (i > 0 && au[i - 1] == 0) ? i - 1 : i;
+                if (hdr >= 0) {
+                    int e = s; while (e > hdr && au[e - 1] == 0) e--;
+                    out.add(new NalRef(st, hdr, e, (au[hdr] >> 1) & 0x3F));
+                    if (out.get(out.size() - 1).type < 32) return out;
+                }
+                st = s; hdr = i + 3; i += 3;
+            } else i++;
+        }
+        if (hdr >= 0 && hdr < au.length) {
+            out.add(new NalRef(st, hdr, au.length, (au[hdr] >> 1) & 0x3F));
+            if (out.get(out.size() - 1).type < 32) return out;
+        }
+        return null;
+    }
+
+    /** {insert offset, NAL type} of the first VCL NAL unit, or null. */
+    private static int[] firstVcl(byte[] au, boolean lengthPrefixed) {
+        List<NalRef> p = prefixNals(au, lengthPrefixed);
+        if (p == null) return null;
+        NalRef v = p.get(p.size() - 1);
+        return new int[]{v.start, v.type};
+    }
+
+    /** One SEI message (payloadType + raw payload bytes, emulation prevention removed). */
+    public static final class SeiMessage {
+        public final int type; public final byte[] payload;
+        public SeiMessage(int type, byte[] payload) { this.type = type; this.payload = payload; }
+    }
+
+    /** All SEI messages of an SEI NAL unit (nal = bytes from the 2-byte NAL header to the end). */
+    public static List<SeiMessage> seiMessages(byte[] au, int header, int end) {
+        byte[] rbsp = unescape(java.util.Arrays.copyOfRange(au, header, end), 2);
+        List<SeiMessage> out = new ArrayList<>();
+        int i = 0;
+        while (i < rbsp.length && !(i == rbsp.length - 1 && (rbsp[i] & 0xFF) == 0x80)) {
+            int type = 0, size = 0, v;
+            do { v = rbsp[i++] & 0xFF; type += v; } while (v == 0xFF && i < rbsp.length);
+            if (i >= rbsp.length) throw new IllegalStateException("SEI truncated after payloadType " + type);
+            do { v = rbsp[i++] & 0xFF; size += v; } while (v == 0xFF && i < rbsp.length);
+            if (i + size > rbsp.length) throw new IllegalStateException("SEI payload " + type + " size " + size + " exceeds NAL");
+            out.add(new SeiMessage(type, java.util.Arrays.copyOfRange(rbsp, i, i + size)));
+            i += size;
+        }
+        return out;
+    }
+
+    /** Prefix SEI NAL unit (2-byte header + escaped RBSP, no start code) carrying the given messages. */
+    public static byte[] prefixSeiNal(List<SeiMessage> msgs) {
         ByteArrayOutputStream rb = new ByteArrayOutputStream();
-        rb.write(137); rb.write(24);
-        for (int k = 0; k < 6; k++) put16(rb, gbrXY[k]);
-        put16(rb, whiteX); put16(rb, whiteY);
-        put32(rb, maxLum); put32(rb, minLum);
-        rb.write(144); rb.write(4);
-        put16(rb, maxCll); put16(rb, maxFall);
-        rb.write(0x80);                                   // rbsp_trailing_bits
+        for (SeiMessage m : msgs) {
+            int t = m.type; while (t >= 255) { rb.write(255); t -= 255; } rb.write(t);
+            int s = m.payload.length; while (s >= 255) { rb.write(255); s -= 255; } rb.write(s);
+            rb.write(m.payload, 0, m.payload.length);
+        }
+        rb.write(0x80);
         byte[] esc = escape(rb.toByteArray());
-        byte[] nal = new byte[4 + 2 + esc.length];
-        nal[3] = 1;
-        nal[4] = (byte) (39 << 1); nal[5] = 1;            // PREFIX_SEI, layer 0, temporal id 0
-        System.arraycopy(esc, 0, nal, 6, esc.length);
+        byte[] nal = new byte[2 + esc.length];
+        nal[0] = (byte) (39 << 1); nal[1] = 1;            // PREFIX_SEI, layer 0, temporal id 0
+        System.arraycopy(esc, 0, nal, 2, esc.length);
         return nal;
     }
 
-    /** Does this access unit already carry a mastering-display SEI? */
-    public static boolean hasMdcv(byte[] au) {
-        Info i = new Info();
-        for (byte[] nal : splitNals(au)) {
-            if (nal.length >= 3 && ((nal[0] >> 1) & 0x3F) == 39) {
-                try { parseSei(unescape(nal, 2), i); } catch (RuntimeException ignored) { }
-            }
-        }
-        return i.mdcvFound;
-    }
-
     /**
-     * Inserts an Annex-B SEI NAL (with start code) right before the first VCL NAL unit of an
-     * Annex-B access unit (after any AUD/VPS/SPS/PPS), as H.265 7.4.2.4.4 requires for prefix SEI.
-     * Returns null if the buffer is not Annex-B or has no VCL NAL.
+     * Inserts a NAL unit (header + payload, no framing) immediately before the first VCL NAL unit,
+     * framed like the rest of the buffer (4-byte start code, or 4-byte length prefix).
+     * Returns null if the access unit has no VCL NAL unit.
      */
-    public static byte[] insertBeforeFirstVcl(byte[] au, byte[] seiWithStartCode) {
-        if (isLengthPrefixed(au)) return null;
-        int i = 0;
-        while (i + 3 < au.length) {
-            if (au[i] == 0 && au[i + 1] == 0 && au[i + 2] == 1) {
-                int type = (au[i + 3] >> 1) & 0x3F;
-                if (type < 32) {
-                    int at = (i > 0 && au[i - 1] == 0) ? i - 1 : i;      // include a 4-byte start code's leading zero
-                    byte[] out = new byte[au.length + seiWithStartCode.length];
-                    System.arraycopy(au, 0, out, 0, at);
-                    System.arraycopy(seiWithStartCode, 0, out, at, seiWithStartCode.length);
-                    System.arraycopy(au, at, out, at + seiWithStartCode.length, au.length - at);
-                    return out;
-                }
-                i += 3;
-            } else i++;
-        }
-        return null;
+    public static byte[] insertNalBeforeFirstVcl(byte[] au, byte[] nal, boolean lengthPrefixed) {
+        int[] at = firstVcl(au, lengthPrefixed);
+        if (at == null) return null;
+        byte[] framed = new byte[4 + nal.length];
+        if (lengthPrefixed) { framed[0] = (byte) (nal.length >>> 24); framed[1] = (byte) (nal.length >>> 16); framed[2] = (byte) (nal.length >>> 8); framed[3] = (byte) nal.length; }
+        else framed[3] = 1;
+        System.arraycopy(nal, 0, framed, 4, nal.length);
+        byte[] out = new byte[au.length + framed.length];
+        System.arraycopy(au, 0, out, 0, at[0]);
+        System.arraycopy(framed, 0, out, at[0], framed.length);
+        System.arraycopy(au, at[0], out, at[0] + framed.length, au.length - at[0]);
+        return out;
     }
 
     // ------------------------------------------------------------------ SEI

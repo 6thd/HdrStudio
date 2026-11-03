@@ -41,11 +41,20 @@ public final class HdrMetadata {
         return bb;
     }
 
-    /** Same metadata as an HEVC prefix SEI NAL (Annex-B), for encoders that do not write it themselves. */
-    public byte[] toSeiNal() {
-        int[] gbr = {xy(g[0]), xy(g[1]), xy(b[0]), xy(b[1]), xy(r[0]), xy(r[1])};
-        return HevcBitstream.buildHdr10Sei(gbr, xy(w[0]), xy(w[1]), Math.round(masterPeakNits * 10000.0),
-                Math.round(masterMinNits * 10000.0), Math.min(65535, maxCll), Math.min(65535, maxFall));
+    /** SEI payload 137 (ST 2086): primaries in G, B, R order (0.00002), white point, max/min luminance (0.0001 cd/m2). */
+    public byte[] mdcvPayload() {
+        ByteBuffer bb = ByteBuffer.allocate(24);
+        for (double[] p : new double[][]{g, b, r, w}) { bb.putShort((short) xy(p[0])); bb.putShort((short) xy(p[1])); }
+        bb.putInt((int) Math.round(masterPeakNits * 10000.0));
+        bb.putInt((int) Math.round(masterMinNits * 10000.0));
+        return bb.array();
+    }
+
+    /** SEI payload 144 (CTA-861.3): MaxCLL, MaxFALL in cd/m2, 0 = unknown. */
+    public byte[] cllPayload() {
+        ByteBuffer bb = ByteBuffer.allocate(4);
+        bb.putShort((short) Math.min(65535, maxCll)); bb.putShort((short) Math.min(65535, maxFall));
+        return bb.array();
     }
 
     private static int xy(double v) { return (int) Math.round(v * 50000); }

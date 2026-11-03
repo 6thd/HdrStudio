@@ -12,8 +12,11 @@ import android.provider.MediaStore;
 
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.core.DeviceCaps;
+import com.mojahed.hdrstudio.core.FrameRate;
 import com.mojahed.hdrstudio.core.SourceInfo;
 import com.mojahed.hdrstudio.encode.AudioTrackSource;
+import com.mojahed.hdrstudio.encode.Check;
+import com.mojahed.hdrstudio.encode.EncodeConfig;
 import com.mojahed.hdrstudio.encode.HdrMetadata;
 import com.mojahed.hdrstudio.encode.MuxerSink;
 import com.mojahed.hdrstudio.encode.VideoEncoder;
@@ -50,6 +53,7 @@ public final class ExportJob implements Runnable {
     private int outW, outH;
     private long bitrate;
     private DeviceCaps.Enc enc;
+    private EncodeConfig config;
     private boolean hdrOut;
     private final StringBuilder report = new StringBuilder();
 
@@ -116,43 +120,46 @@ public final class ExportJob implements Runnable {
         if (s.isHdr()) {
             p.srcPeak = s.srcMaxCll > 0 ? s.srcMaxCll : s.srcMasteringPeak > 0 ? s.srcMasteringPeak : 1000f;
         }
-        double fps = s.avgFps;
-        Plan pl = planOutput(caps, s, req.preset, req.targetShortSide);
+        Plan pl = planOutput(caps, s, req.preset, req.targetShortSide, req.bitrateOverride);
         if (pl.error != null) throw new IllegalStateException(pl.error);
-        enc = pl.enc; outW = pl.w; outH = pl.h;
-        int ow = pl.rawW, oh = pl.rawH;
+        enc = pl.enc; config = pl.config; outW = config.width; outH = config.height; bitrate = config.bitrate;
         p.outW = outW; p.outH = outH;
-        bitrate = enc.clampBitrate(req.bitrateOverride > 0 ? req.bitrateOverride : req.preset.startBitrate(outW, outH, fps));
         EncodeSelfTest.Result st = req.selfTest;
-        if (st == null || !st.usable() || !st.matches(hdrOut, enc.name, outW, outH, fps))
-            throw new IllegalStateException("لم يُثبت «فحص مسار التصدير» هذا الإعداد بالضبط (" + enc.name + " · " + outW + "×" + outH
-                    + String.format(Locale.US, " · %.3f fps", fps) + "). شغّل الفحص لهذا الإعداد أولاً.");
-        if (hdrOut) report.append("حكم فحص الجهاز: ").append(st.hdr10 == EncodeSelfTest.Hdr10.VERIFIED ? "HDR10 مثبت بالكامل"
-                : "HDR10 مثبت في البتستريم والألوان دون إثبات 10-bit على مستوى البكسل").append('\n');
-        DeviceCaps.Enc e = enc;
-        report.append(String.format(Locale.US, "الخطة: %d×%d → %d×%d · %.3f fps · %s · %.1f Mbps · مرمّز %s\n",
-                s.width, s.height, outW, outH, fps, req.preset.label, bitrate / 1e6, e.name));
-        if (outW != ow || outH != oh) report.append("تمت محاذاة الأبعاد لمتطلبات المرمّز (").append(ow).append('×').append(oh).append(")\n");
+        if (st == null || !st.matches(config))
+            throw new IllegalStateException("لم يُفحص مسار التصدير بهذا الإعداد بالضبط (" + config.describe() + "). شغّل الفحص لهذا الإعداد أولاً.");
+        if (!st.usable())
+            throw new IllegalStateException("فحص مسار التصدير لم يسمح بهذا الإعداد:\n" + st.verdict.summary());
+        report.append("فحص مسار التصدير بهذا الإعداد:\n").append(st.verdict.summary()).append('\n');
+        report.append(String.format(Locale.US, "الخطة: %d×%d → %s · %s · %s\n", s.width, s.height, config.describe(), req.preset.label,
+                s.vfr ? "المصدر متغير المعدل: الطوابع الزمنية الأصلية تُحفظ، ومعدل الإطارات للمرمّز تلميح فقط" : "الطوابع الزمنية من المصدر"));
+        if (outW != pl.rawW || outH != pl.rawH) report.append("تمت محاذاة الأبعاد لمتطلبات المرمّز (").append(pl.rawW).append('×').append(pl.rawH).append(")\n");
+        if (req.bitrateOverride > 0 && bitrate != req.bitrateOverride)
+            report.append(String.format(Locale.US, "معدل البت المطلوب %.2f Mbps حُدّ إلى مدى المرمّز: %.2f Mbps\n", req.bitrateOverride / 1e6, bitrate / 1e6));
     }
 
-    /** Output plan shared by the export and the UI (the self test must run with exactly this). */
+    /** Output plan shared by the export and the UI (the self test must run with exactly config). */
     public static final class Plan {
-        public DeviceCaps.Enc enc; public int w, h, rawW, rawH; public double fps; public String error;
+        public DeviceCaps.Enc enc; public int rawW, rawH; public FrameRate rate; public EncodeConfig config; public String error;
     }
 
-    public static Plan planOutput(DeviceCaps caps, SourceInfo s, com.mojahed.hdrstudio.encode.Presets preset, int targetShortSide) {
-        Plan pl = new Plan();
-        pl.fps = s.avgFps;
+    /** @param requestedBitrate bit/s before the encoder's clamp; <= 0 = the preset's starting point */
+    public static Plan planOutput(DeviceCaps caps, SourceInfo s, com.mojahed.hdrstudio.encode.Presets preset, int targetShortSide, long requestedBitrate) {
         int[] d = planDims(s, preset, targetShortSide);
-        pl.rawW = d[0]; pl.rawH = d[1];
+        return planFor(caps, preset, d[0], d[1], FrameRate.fromAverage(s.avgFps), requestedBitrate);
+    }
+
+    public static Plan planFor(DeviceCaps caps, com.mojahed.hdrstudio.encode.Presets preset, int rawW, int rawH, FrameRate rate, long requestedBitrate) {
+        Plan pl = new Plan();
+        pl.rawW = rawW; pl.rawH = rawH; pl.rate = rate;
+        double fps = rate.fps();
         String mime = preset.hdr ? DeviceCaps.HEVC : preset.mime;
-        DeviceCaps.Enc e = preset.hdr ? caps.pickHdrEncoder(pl.rawW, pl.rawH, pl.fps) : caps.pickSdrEncoder(mime, pl.rawW, pl.rawH, pl.fps);
-        if (e == null) { pl.error = "لا يوجد مرمّز " + (preset.hdr ? "HEVC 10-bit" : mime) + " يدعم " + pl.rawW + "×" + pl.rawH; return pl; }
-        int wa = Math.max(2, e.wAlign), ha = Math.max(2, e.hAlign);
-        pl.w = pl.rawW / wa * wa; pl.h = pl.rawH / ha * ha;
-        if (!e.supports(pl.w, pl.h, pl.fps))
-            pl.error = String.format(Locale.US, "المرمّز %s لا يدعم %d×%d عند %.2f fps. اختر دقة أقل.", e.name, pl.w, pl.h, pl.fps);
+        DeviceCaps.Enc e = preset.hdr ? caps.pickHdrEncoder(rawW, rawH, fps) : caps.pickSdrEncoder(mime, rawW, rawH, fps);
+        if (e == null) { pl.error = "لا يوجد مرمّز " + (preset.hdr ? "HEVC 10-bit" : mime) + " يدعم " + rawW + "×" + rawH; return pl; }
         pl.enc = e;
+        long want = requestedBitrate > 0 ? requestedBitrate : preset.startBitrate(rawW, rawH, fps);
+        pl.config = VideoEncoder.plan(e, preset.hdr, rawW, rawH, rate, want, preset.iFrameSec);
+        if (!e.supports(pl.config.width, pl.config.height, fps))
+            pl.error = String.format(Locale.US, "المرمّز %s لا يدعم %d×%d عند %s fps. اختر دقة أقل.", e.name, pl.config.width, pl.config.height, rate.label());
         return pl;
     }
 
@@ -272,10 +279,7 @@ public final class ExportJob implements Runnable {
                 report.append("الصوت: ").append(audio.mode.equals("copy") ? "نسخ كما هو" : "أعيد ترميزه إلى AAC (الصيغة الأصلية غير مدعومة في MP4)").append('\n');
             } else if (s.audioTrack >= 0) report.append("الصوت: حُذف بطلب المستخدم\n");
             stage(passes == 2 ? "المرحلة 2/2: المعالجة والترميز" : "المعالجة والترميز");
-            VideoEncoder.Config c = new VideoEncoder.Config();
-            c.width = outW; c.height = outH; c.fps = (float) s.avgFps; c.bitrate = bitrate; c.hdr = hdrOut;
-            c.mime = hdrOut ? DeviceCaps.HEVC : req.preset.mime; c.meta = meta; c.iFrameSec = req.preset.iFrameSec;
-            ve = new VideoEncoder(enc, c, mux);
+            ve = new VideoEncoder(enc, config, meta, mux);
             final AudioTrackSource au = audio;
             final MuxerSink mx = mux;
             if (au != null) ve.setListener(new VideoEncoder.Listener() {
@@ -330,11 +334,10 @@ public final class ExportJob implements Runnable {
             if (vr.warnings.length() > 0) report.append("تنبيهات:\n").append(vr.warnings);
             if (!vr.ok) throw new IllegalStateException("رُفض الملف الناتج ولم يُحفظ:\n" + vr.failures);
             if (hdrOut) {
-                if (ve.seiInjectedFrames > 0) report.append("بيانات HDR10 الثابتة (SEI) أدرجها التطبيق في ").append(ve.seiInjectedFrames).append(" إطاراً مفتاحياً لأن المرمّز لا يكتبها\n");
-                boolean full = req.selfTest.hdr10 == EncodeSelfTest.Hdr10.VERIFIED;
-                report.append("حكم الملف الناتج: ").append(full
-                        ? "البتستريم والبيانات صحيحة في الملف نفسه؛ ودقة 10-bit مثبتة بفحص الجهاز بالإعداد نفسه"
-                        : "البتستريم والبيانات صحيحة في الملف نفسه؛ دقة 10-bit على مستوى البكسل غير مثبتة على هذا الجهاز").append('\n');
+                if (ve.seiGuard != null) report.append("SEI 137/144: ").append(ve.seiGuard.describe()).append('\n');
+                Check g = req.selfTest.verdict.gradation;
+                report.append("دقة التدرج: ").append(g.passed() ? "اجتاز اختبار دقة التدرج بهذه الإعدادات في فحص المسار (لا تُقاس على محتوى الملف نفسه)"
+                        : "لم تُقس على هذا الجهاز (المفكك لا يخرج P010)؛ التحقق يقتصر على البتستريم والألوان والوسوم والبيانات").append('\n');
             }
             pfd.close(); pfd = null;
             if (pendingUri != null) {

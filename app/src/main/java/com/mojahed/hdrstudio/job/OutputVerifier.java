@@ -4,34 +4,51 @@ import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 
+import com.mojahed.hdrstudio.encode.Check;
+import com.mojahed.hdrstudio.encode.Hdr10FileCheck;
 import com.mojahed.hdrstudio.encode.HdrMetadata;
 import com.mojahed.hdrstudio.encode.HevcBitstream;
+import com.mojahed.hdrstudio.encode.PixelDiagnostics;
 import com.mojahed.hdrstudio.encode.StreamProbe;
 
 import java.io.FileDescriptor;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
  * Re-opens the finished file and checks what is really in it - container tags, the HEVC
- * bitstream itself (SPS bit depth, VUI colour description, SEI metadata, parsed independently),
- * decoded pixel precision, frame count, duration, audio. Any HDR10 property that is wrong is a
- * HARD failure: the file is then not published as a success.
+ * bitstream itself (SPS bit depth, VUI colour description, SEI metadata on every IRAP, parsed
+ * independently), frame count, duration, audio, decodability. Every hard property is its own
+ * {@link Check}; any FAIL means the file is not published as a success.
+ * Decoded-pixel statistics of arbitrary content are a diagnostic only (black, flat or faded
+ * pictures are valid 10-bit video with few codes); gradation precision is the path test's job.
+ * These are facts about the file, not a statement about picture quality.
  */
 public final class OutputVerifier {
     public static final class Report {
-        public boolean ok;                 // all hard requirements met
-        public long seiInjectedFrames;     // informational
+        public boolean ok;                 // no hard check failed
+        public final List<Check> checks = new ArrayList<>();
         public final StringBuilder text = new StringBuilder();
         public final StringBuilder warnings = new StringBuilder();
         public final StringBuilder failures = new StringBuilder();
         public int videoFrames;
         public long videoDurUs, audioDurUs;
         public boolean hasAudio;
+        public PixelDiagnostics.Result pixels;
 
-        void fail(String s) { failures.append("✗ ").append(s).append('\n'); }
+        void add(Check c) {
+            checks.add(c);
+            if (c.failed()) failures.append("✗ ").append(c.what).append(": ").append(c.detail).append('\n');
+        }
+        void fail(String what, String s) { add(Check.fail(what, s)); }
     }
 
-    /** @param meta HDR metadata that was configured (null for SDR) - SEI content must match it. */
+    /**
+     * @param expectedFrames frames the export scheduled and encoded
+     * @param meta HDR metadata that was configured (null for SDR) - SEI content must match it.
+     */
     public static Report verify(FileDescriptor fd, boolean hdr, int expectedFrames, boolean expectAudio, HdrMetadata meta) {
         Report r = new Report();
         MediaExtractor ex = new MediaExtractor();
@@ -44,74 +61,75 @@ public final class OutputVerifier {
                 if (v < 0 && m.startsWith("video/")) v = i;
                 if (a < 0 && m.startsWith("audio/")) a = i;
             }
-            if (v < 0) { r.fail("لا يوجد مسار فيديو في الناتج"); return finish(r); }
+            if (v < 0) { r.fail("مسار الفيديو", "لا يوجد مسار فيديو في الناتج"); return finish(r); }
             MediaFormat vf = ex.getTrackFormat(v);
             String mime = vf.getString(MediaFormat.KEY_MIME);
+            boolean hevc = MediaFormat.MIMETYPE_VIDEO_HEVC.equals(mime);
             r.text.append("الفيديو: ").append(mime).append(' ').append(vf.getInteger(MediaFormat.KEY_WIDTH)).append('×').append(vf.getInteger(MediaFormat.KEY_HEIGHT)).append('\n');
 
-            // ---- 1. container colour tags (hard)
+            // ---- 1. container colour tags
             int std = key(vf, MediaFormat.KEY_COLOR_STANDARD), tr = key(vf, MediaFormat.KEY_COLOR_TRANSFER), rg = key(vf, MediaFormat.KEY_COLOR_RANGE);
             boolean tagsOk = hdr ? (std == MediaFormat.COLOR_STANDARD_BT2020 && tr == MediaFormat.COLOR_TRANSFER_ST2084 && rg == MediaFormat.COLOR_RANGE_LIMITED)
                     : (std == MediaFormat.COLOR_STANDARD_BT709 && tr == MediaFormat.COLOR_TRANSFER_SDR_VIDEO && rg == MediaFormat.COLOR_RANGE_LIMITED);
-            r.text.append("وسوم الحاوية: ").append(std).append('/').append(tr).append('/').append(rg).append(tagsOk ? " ✓" : " ✗").append('\n');
-            if (!tagsOk) r.fail("وسوم الألوان في الحاوية لا تطابق " + (hdr ? "HDR10 (BT.2020/PQ/Limited)" : "SDR (BT.709/Limited)"));
+            r.add(Check.of(tagsOk, "وسوم الحاوية", std + "/" + tr + "/" + rg + " (المطلوب " + (hdr ? "BT.2020/PQ/Limited" : "BT.709/Limited") + ")"));
 
-            // ---- 2. bitstream (hard for HEVC)
+            // ---- 2. bitstream signalling (SPS/VUI) and first SEI
             ex.selectTrack(v);
-            if (mime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC)) {
-                HevcBitstream.Info bi = StreamProbe.inspectBitstream(ex, vf, 3);
+            HevcBitstream.Info bi = null;
+            if (hevc) {
+                bi = StreamProbe.inspectBitstream(ex, vf, 3);
                 r.text.append("البتستريم: ").append(bi.describe()).append('\n');
-                if (!bi.spsFound) r.fail("تعذر قراءة SPS من البتستريم");
-                else if (hdr) {
-                    if (bi.bitDepthLuma != 10 || bi.bitDepthChroma != 10) r.fail("البتستريم ليس 10-bit (" + bi.bitDepthLuma + "-bit)");
-                    if (!bi.colourDescription || bi.colourPrimaries != 9 || bi.transfer != 16 || bi.matrix != 9 || bi.fullRange)
-                        r.fail("وصف الألوان في VUI ليس BT.2020/PQ/Limited");
-                    if (!bi.mdcvFound) r.fail("رسالة SEI لشاشة الـmastering غير موجودة في البتستريم");
-                    else if (meta != null && Math.abs(bi.mdcvMaxLum / 10000.0 - meta.masterPeakNits) > 1)
-                        r.fail("قمة شاشة الـmastering في SEI (" + bi.mdcvMaxLum / 10000 + ") لا تطابق المضبوط (" + (int) meta.masterPeakNits + ")");
-                    if (meta != null && meta.cllMeasured) {
-                        if (!bi.cllFound) r.fail("قيم MaxCLL/MaxFALL المقاسة لم تُكتب في SEI");
-                        else if (bi.maxCll != meta.maxCll || bi.maxFall != meta.maxFall)
-                            r.fail("MaxCLL/MaxFALL في SEI (" + bi.maxCll + "/" + bi.maxFall + ") لا تطابق المقاس (" + meta.maxCll + "/" + meta.maxFall + ")");
-                    } else if (bi.cllFound && (bi.maxCll != 0 || bi.maxFall != 0)) {
-                        r.fail("SEI يحمل MaxCLL/MaxFALL غير مقاسة (" + bi.maxCll + "/" + bi.maxFall + ")");
-                    }
-                } else {
+                if (hdr) r.add(Hdr10FileCheck.signalling(bi));
+                else if (!bi.spsFound) r.fail("البتستريم (SPS/VUI)", "تعذر قراءة SPS");
+                else if (bi.colourDescription && (bi.colourPrimaries != 1 || bi.transfer != 1 || bi.matrix != 1))
+                    r.fail("البتستريم (SPS/VUI)", "وصف الألوان في VUI ليس BT.709");
+                else {
+                    r.add(Check.pass("البتستريم (SPS/VUI)", bi.bitDepthLuma + "-bit" + (bi.colourDescription ? " · BT.709" : " · بلا وصف ألوان")));
                     if (bi.bitDepthLuma != 8) r.warnings.append("ملف SDR بعمق ").append(bi.bitDepthLuma).append("-bit\n");
-                    if (bi.colourDescription && (bi.colourPrimaries != 1 || bi.transfer != 1 || bi.matrix != 1))
-                        r.fail("وصف الألوان في VUI ليس BT.709");
                 }
             } else {
                 r.text.append("البتستريم: ").append(mime).append(" - لا يوجد محلل مستقل لهذا الترميز (الاعتماد على وسوم الحاوية والمفكك)\n");
             }
             ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
 
-            // ---- 3. decoded samples (HDR). On arbitrary content only a WEAK check is possible: it rules
-            // out an 8-bit Y'CbCr stage (decoder/encoder side), not an 8-bit RGB stage before the
-            // encoder - that is what the self-test ramp proves, with the same export settings.
+            // ---- 3. decoded samples: diagnostic only
             if (hdr) {
                 StreamProbe.PixelDepth pd = StreamProbe.probePixels(ex, vf, 3, null, 0);
-                r.text.append(pd.describe()).append('\n');
-                if (pd.available) {
-                    if (!pd.noEightBitYcbcrStage(0.25)) r.fail("عينات الناتج مضاعفات 4 (مرحلة 8-bit في Y'CbCr)");
+                if (pd.measured()) {
+                    r.pixels = pd.diagnostics();
+                    r.text.append(r.pixels.describe()).append('\n');
+                    if (r.pixels.outcome == PixelDiagnostics.Outcome.SUSPECT_8BIT) r.warnings.append(r.pixels.describe()).append('\n');
                 } else {
-                    r.warnings.append("المفكك لا يخرج P010: لم تُفحص عينات الناتج\n");
+                    r.text.append(pd.describe()).append(" (تشخيص فقط)\n");
                 }
                 ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
             }
             ex.unselectTrack(v);
 
-            // ---- 4. frames, duration, audio
+            // ---- 4. every video sample: frame count, duration, SEI on every IRAP (HDR10)
             ex.selectTrack(v);
             ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            Hdr10FileCheck.IrapScan scan = hdr && hevc && meta != null ? new Hdr10FileCheck.IrapScan(meta) : null;
+            ByteBuffer sb = scan != null ? ByteBuffer.allocate(maxInput(vf)) : null;
             long first = Long.MAX_VALUE, last = Long.MIN_VALUE;
             int n = 0;
-            while (ex.getSampleTime() >= 0) { long t = ex.getSampleTime(); first = Math.min(first, t); last = Math.max(last, t); n++; if (!ex.advance()) break; }
+            while (ex.getSampleTime() >= 0) {
+                long t = ex.getSampleTime(); first = Math.min(first, t); last = Math.max(last, t); n++;
+                if (scan != null) {
+                    sb.clear();
+                    int len = ex.readSampleData(sb, 0);
+                    if (len > 0) { byte[] au = new byte[len]; sb.position(0); sb.get(au, 0, len); scan.add(au); }
+                }
+                if (!ex.advance()) break;
+            }
             ex.unselectTrack(v);
+            if (hdr) {
+                if (!hevc) r.fail("بيانات HDR الثابتة النهائية في الملف", "HDR10 يتطلب HEVC");
+                else r.add(Hdr10FileCheck.finalMetadata(bi, meta, scan));
+            }
             r.videoFrames = n;
             r.videoDurUs = n > 1 ? last - first : 0;
-            r.text.append(String.format(Locale.US, "عدد الإطارات: %d (المعالَج %d)\n", n, expectedFrames));
-            if (n != expectedFrames) r.fail("عدد الإطارات في الملف (" + n + ") لا يساوي عدد الإطارات المعالجة (" + expectedFrames + ")");
+            r.add(Check.of(n == expectedFrames, "عدد الإطارات", String.format(Locale.US, "في الملف %d · المجدول والمرمَّز %d", n, expectedFrames)));
             if (a >= 0) {
                 r.hasAudio = true;
                 ex.selectTrack(a);
@@ -120,20 +138,18 @@ public final class OutputVerifier {
                 ex.unselectTrack(a);
                 r.audioDurUs = al - af;
                 double drift = Math.abs((al - af) - r.videoDurUs) / 1000.0;
-                r.text.append(String.format(Locale.US, "الصوت: بداية %.1f ms · فرق المدة عن الفيديو %.0f ms\n", af / 1000.0, drift));
+                r.add(Check.pass("الصوت", String.format(Locale.US, "بداية %.1f ms · فرق المدة عن الفيديو %.0f ms", af / 1000.0, drift)));
                 if (drift > 250) r.warnings.append("مدة الصوت تختلف عن الفيديو بأكثر من 250ms (قد يكون من المصدر)\n");
-            } else {
-                r.text.append("الصوت: لا يوجد\n");
-                if (expectAudio) r.fail("الصوت مفقود رغم وجوده في المصدر");
-            }
+            } else if (expectAudio) r.fail("الصوت", "مفقود رغم وجوده في المصدر");
+            else r.text.append("الصوت: لا يوجد\n");
+
             // ---- 5. decodability
             ex.selectTrack(v);
             ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
             String dr = decodeFirst(ex, vf);
-            r.text.append("فك ترميز الإطار الأول: ").append(dr).append('\n');
-            if (!dr.startsWith("ok")) r.fail("تعذر فك ترميز الملف الناتج");
+            r.add(Check.of(dr.equals("ok"), "فك ترميز الإطار الأول", dr));
         } catch (Exception e) {
-            r.fail("تعذر فحص الملف: " + e.getMessage());
+            r.fail("فحص الملف", "تعذر الفحص: " + e.getMessage());
         } finally {
             ex.release();
         }
@@ -141,9 +157,17 @@ public final class OutputVerifier {
     }
 
     private static Report finish(Report r) {
-        r.ok = r.failures.length() == 0;
+        r.ok = !r.checks.isEmpty() && r.failures.length() == 0;
+        StringBuilder head = new StringBuilder("حقائق الملف (ليست حكماً على الجودة):\n");
+        for (Check c : r.checks) head.append(c.line()).append('\n');
+        r.text.insert(0, head);
         if (!r.ok) r.text.append("أسباب الرفض:\n").append(r.failures);
         return r;
+    }
+
+    private static int maxInput(MediaFormat f) {
+        int m = f.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE) ? f.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) : 0;
+        return Math.max(m, 16 << 20);
     }
 
     private static int key(MediaFormat f, String k) { return f.containsKey(k) ? f.getInteger(k) : -1; }
@@ -169,7 +193,7 @@ public final class OutputVerifier {
                 int o = dec.dequeueOutputBuffer(bi, 5000);
                 if (o >= 0) { dec.releaseOutputBuffer(o, false); return "ok"; }
             }
-            return "مهلة";
+            return "انتهت المهلة (5 ث) دون إطار";
         } catch (Exception e) {
             return "خطأ " + e.getMessage();
         } finally {

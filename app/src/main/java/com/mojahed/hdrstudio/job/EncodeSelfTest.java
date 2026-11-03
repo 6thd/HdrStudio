@@ -11,8 +11,12 @@ import android.os.Build;
 
 import com.mojahed.hdrstudio.core.ColorMath;
 import com.mojahed.hdrstudio.core.DeviceCaps;
+import com.mojahed.hdrstudio.encode.Check;
+import com.mojahed.hdrstudio.encode.EncodeConfig;
+import com.mojahed.hdrstudio.encode.Hdr10FileCheck;
 import com.mojahed.hdrstudio.encode.HdrMetadata;
 import com.mojahed.hdrstudio.encode.HevcBitstream;
+import com.mojahed.hdrstudio.encode.PathTestVerdict;
 import com.mojahed.hdrstudio.encode.MuxerSink;
 import com.mojahed.hdrstudio.encode.StreamProbe;
 import com.mojahed.hdrstudio.encode.VideoEncoder;
@@ -31,91 +35,79 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Proves the export path on THIS device with THE EXPORT SETTINGS (encoder, size, fps, bitrate,
- * HDR metadata), instead of trusting tags or screen brightness. Each property gets its own
- * verdict:
+ * Proves the export path on THIS device with THE EXPORT CONFIGURATION ({@link EncodeConfig}:
+ * encoder, profile, aligned size, exact frame rate, clamped bitrate, bitrate mode, GOP, colour),
+ * instead of trusting tags or screen brightness. Each property gets its own PASS / FAIL /
+ * INCONCLUSIVE verdict ({@link PathTestVerdict}):
  *   1. colour accuracy   - known patches -> GL -> encoder RGB->Y'CbCr -> HEVC -> decode -> fit of
  *                          matrix/range (+ compensation, re-verified, if the encoder differs);
  *   2. tags              - container colr box and decoder-reported colour aspects;
- *   3. bitstream         - SPS bit depth, VUI colour description, SEI mastering/CLL parsed
- *                          independently from the NAL units ({@link HevcBitstream});
- *   4. pixel precision   - a fine grey ramp (64 steps of 1/1023) must survive decode with a
- *                          coverage90 >= 26 codes (10-bit measured 34-43, an 8-bit stage 13-18;
- *                          see PrecisionMetric); needs a decoder that outputs P010.
+ *   3. bitstream         - SPS bit depth, VUI colour description parsed from the NAL units;
+ *   4. metadata transport- SEI 137/144 on every IRAP carry exactly the configured SAMPLE values
+ *                          (the export's final values are verified in the exported file itself);
+ *   5. gradation         - a fine grey ramp (64 steps of 1/1023) must survive decode with a
+ *                          coverage90 >= 26 codes (see PrecisionMetric); needs P010 decoder output.
+ *                          A decoder error or timeout is a FAIL, not "unmeasurable".
  * The decoder used for tags/pixels is configured from the bitstream only (no container keys).
- * HDR10 is VERIFIED only when all four hold; PARTIAL when only (4) could not be measured.
+ * A stored result applies only to an identical configuration, test version and system build.
  */
 public final class EncodeSelfTest {
-    public static final int VERSION = 5;
-    public enum Verdict { PASS, CORRECTED, FAIL }
-    public enum Hdr10 { VERIFIED, PARTIAL, FAIL, NOT_APPLICABLE }
+    public static final int VERSION = 6;
+    public enum Colour { PASS, CORRECTED, FAIL }
 
     public static final class Result {
-        // configuration the test ran with (must match the export)
-        public boolean hdr;
-        public String encoder = "";
-        public int width, height;
-        public float fps;
-        public long bitrate;
-        // verdicts
-        public Verdict colour = Verdict.FAIL;
-        public boolean containerTagsOk, decoderTagsOk, decoderTagsReported, bitstreamOk, pixelMeasured, pixelOk;
-        public Hdr10 hdr10 = Hdr10.NOT_APPLICABLE;
+        public EncodeConfig config;              // the configuration the test ran with (must equal the export's)
+        public String systemId = "";
+        public final PathTestVerdict verdict = new PathTestVerdict();
+        public Colour colour = Colour.FAIL;
         public float[] comp = ColorMath.IDENTITY3.clone();
         public float[] compOffset = new float[3];
         public double rmsCodes = -1;
-        public int rampDistinct = -1;            // ramp coverage90 (see PrecisionMetric)
-        public boolean seiInjected;              // SEI written by the app because the encoder did not
+        public int rampCoverage90 = -1;
+        public String seiSource = "";
         public String detail = "";
 
-        public boolean usable() {
-            if (colour == Verdict.FAIL || !containerTagsOk || !decoderTagsOk) return false;
-            if (!hdr) return decoderTagsReported;            // SDR (H.264 too): no independent parser -> need decoder evidence
-            return bitstreamOk && (pixelOk || !pixelMeasured);
-        }
-
-        public boolean matches(boolean hdr, String enc, int w, int h, double fps) {
-            return this.hdr == hdr && encoder.equals(enc) && width == w && height == h && Math.abs(this.fps - fps) <= 0.01 * fps;
-        }
+        public boolean hdr() { return config != null && config.hdr; }
+        public boolean usable() { return verdict.exportAllowed(); }
+        public boolean matches(EncodeConfig c) { return config != null && c != null && config.canonical().equals(c.canonical()); }
 
         public String summary() {
             StringBuilder b = new StringBuilder();
-            b.append(hdr ? "فحص مسار HDR10" : "فحص مسار SDR").append(String.format(Locale.US, " (%s · %d×%d · %.3f fps · %.1f Mbps)\n",
-                    encoder, width, height, fps, bitrate / 1e6));
-            b.append("• دقة الألوان: ").append(colour == Verdict.PASS ? "ناجح" : colour == Verdict.CORRECTED ? "ناجح بعد تصحيح مصفوفة المرمّز" : "فشل")
-                    .append(rmsCodes >= 0 ? String.format(Locale.US, " (RMS %.2f code)", rmsCodes) : "").append('\n');
-            b.append("• وسوم الحاوية: ").append(ok(containerTagsOk)).append(" · وسوم المفكك (من البتستريم): ")
-                    .append(decoderTagsReported ? ok(decoderTagsOk) : "لم يبلغ عنها المفكك").append('\n');
-            if (hdr) {
-                b.append("• البتستريم (10-bit + VUI + SEI): ").append(ok(bitstreamOk)).append('\n');
-                b.append("• دقة 10-bit في البكسلات: ").append(!pixelMeasured ? "غير قابل للقياس بهذا المفكك" : ok(pixelOk) + " (تغطية 90% بـ " + rampDistinct + " رمزاً، المطلوب ≥ " + com.mojahed.hdrstudio.encode.PrecisionMetric.MIN_COVERAGE90_FOR_10BIT + ")").append('\n');
-                b.append("• بيانات SEI الثابتة: ").append(seiInjected ? "يكتبها التطبيق (المرمّز لا يكتبها)" : "يكتبها المرمّز").append('\n');
-                b.append("الحكم: ").append(hdr10 == Hdr10.VERIFIED ? "HDR10 مثبت بالكامل" : hdr10 == Hdr10.PARTIAL
-                        ? "HDR10 مثبت في البتستريم والألوان، دون إثبات 10-bit على مستوى البكسل" : "HDR10 غير مثبت – التصدير HDR ممنوع").append('\n');
-            }
+            b.append(hdr() ? "فحص مسار HDR10" : "فحص مسار SDR").append(" (").append(config == null ? "?" : config.describe()).append(")\n");
+            b.append(verdict.summary()).append('\n');
+            if (!seiSource.isEmpty()) b.append("مصدر SEI: ").append(seiSource).append('\n');
             return b.append(detail).toString().trim();
         }
 
-        private static String ok(boolean b) { return b ? "✓" : "✗"; }
-
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
-            o.put("hdr", hdr).put("encoder", encoder).put("w", width).put("h", height).put("fps", fps).put("bitrate", bitrate)
-                    .put("colour", colour.name()).put("ct", containerTagsOk).put("dt", decoderTagsOk).put("dr", decoderTagsReported).put("bs", bitstreamOk)
-                    .put("pm", pixelMeasured).put("po", pixelOk).put("hdr10", hdr10.name()).put("rms", rmsCodes).put("ramp", rampDistinct).put("sei", seiInjected).put("detail", detail);
+            o.put("cfg", config.canonical()).put("sys", systemId).put("hdr", verdict.hdr).put("colourMode", colour.name())
+                    .put("rms", rmsCodes).put("ramp", rampCoverage90).put("sei", seiSource).put("detail", detail);
+            JSONArray ch = new JSONArray();
+            for (Check c : new Check[]{verdict.colour, verdict.containerTags, verdict.decoderTags, verdict.bitstream, verdict.metadataTransport, verdict.gradation})
+                ch.put(new JSONObject().put("v", c.verdict.name()).put("w", c.what).put("d", c.detail));
+            o.put("checks", ch);
             JSONArray c = new JSONArray(); for (float v : comp) c.put(v); o.put("comp", c);
             JSONArray f = new JSONArray(); for (float v : compOffset) f.put(v); o.put("off", f);
             return o;
         }
 
-        static Result fromJson(JSONObject o) throws Exception {
+        static Result fromJson(JSONObject o, EncodeConfig expect, String systemId) throws Exception {
+            if (!o.getString("cfg").equals(expect.canonical()) || !o.getString("sys").equals(systemId)) return null;
             Result r = new Result();
-            r.hdr = o.getBoolean("hdr"); r.encoder = o.getString("encoder"); r.width = o.getInt("w"); r.height = o.getInt("h");
-            r.fps = (float) o.getDouble("fps"); r.bitrate = o.getLong("bitrate"); r.colour = Verdict.valueOf(o.getString("colour"));
-            r.containerTagsOk = o.getBoolean("ct"); r.decoderTagsOk = o.getBoolean("dt"); r.decoderTagsReported = o.optBoolean("dr"); r.bitstreamOk = o.getBoolean("bs");
-            r.pixelMeasured = o.getBoolean("pm"); r.pixelOk = o.getBoolean("po"); r.hdr10 = Hdr10.valueOf(o.getString("hdr10"));
-            r.rmsCodes = o.getDouble("rms"); r.rampDistinct = o.getInt("ramp"); r.seiInjected = o.optBoolean("sei"); r.detail = o.getString("detail");
-            JSONArray c = o.getJSONArray("comp"); for (int i = 0; i < 9; i++) r.comp[i] = (float) c.getDouble(i);
+            r.config = expect; r.systemId = systemId;
+            r.verdict.hdr = o.getBoolean("hdr");
+            r.colour = Colour.valueOf(o.getString("colourMode"));
+            r.rmsCodes = o.getDouble("rms"); r.rampCoverage90 = o.getInt("ramp"); r.seiSource = o.optString("sei"); r.detail = o.getString("detail");
+            JSONArray ch = o.getJSONArray("checks");
+            Check[] c = new Check[6];
+            for (int i = 0; i < 6; i++) {
+                JSONObject j = ch.getJSONObject(i);
+                c[i] = Check.restore(Check.Verdict.valueOf(j.getString("v")), j.getString("w"), j.getString("d"));
+            }
+            r.verdict.colour = c[0]; r.verdict.containerTags = c[1]; r.verdict.decoderTags = c[2];
+            r.verdict.bitstream = c[3]; r.verdict.metadataTransport = c[4]; r.verdict.gradation = c[5];
+            JSONArray cm = o.getJSONArray("comp"); for (int i = 0; i < 9; i++) r.comp[i] = (float) cm.getDouble(i);
             JSONArray f = o.getJSONArray("off"); for (int i = 0; i < 3; i++) r.compOffset[i] = (float) f.getDouble(i);
             return r;
         }
@@ -133,37 +125,40 @@ public final class EncodeSelfTest {
         PATCHES_RGB[15] = new double[]{0.62, 0.48, 0.40};
     }
 
-    static String prefKey(boolean hdr, String enc, int w, int h, double fps) {
-        return String.format(Locale.US, "st_v%d_%s_%s_%dx%d_%.3f_%d", VERSION, hdr ? "hdr" : "sdr", enc, w, h, fps, Build.FINGERPRINT.hashCode());
+    /** Sample metadata used only to prove that SEI 137/144 reach the file unchanged. */
+    static HdrMetadata sampleMetadata() {
+        HdrMetadata m = HdrMetadata.p3(1000);
+        m.setMeasured(987, 321, "قيم نموذجية لفحص المسار");
+        return m;
     }
 
-    public static Result load(Context ctx, boolean hdr, String enc, int w, int h, double fps) {
-        String s = ctx.getSharedPreferences("selftest", Context.MODE_PRIVATE).getString(prefKey(hdr, enc, w, h, fps), null);
+    public static String systemId() { return Build.FINGERPRINT; }
+
+    public static Result load(Context ctx, EncodeConfig cfg) {
+        if (cfg == null) return null;
+        String s = ctx.getSharedPreferences("selftest", Context.MODE_PRIVATE).getString(cfg.resultKey(VERSION, systemId()), null);
         if (s == null) return null;
-        try { return Result.fromJson(new JSONObject(s)); } catch (Exception e) { return null; }
+        try { return Result.fromJson(new JSONObject(s), cfg, systemId()); } catch (Exception e) { return null; }
     }
 
     private static void store(Context ctx, Result r) {
         try {
             ctx.getSharedPreferences("selftest", Context.MODE_PRIVATE).edit()
-                    .putString(prefKey(r.hdr, r.encoder, r.width, r.height, r.fps), r.toJson().toString()).apply();
+                    .putString(r.config.resultKey(VERSION, r.systemId), r.toJson().toString()).apply();
         } catch (Exception ignored) { }
     }
 
     /** Runs on a worker thread with the exact export configuration. */
-    public static Result run(Context ctx, DeviceCaps.Enc enc, boolean hdr, int w, int h, float fps, long bitrate) {
+    public static Result run(Context ctx, DeviceCaps.Enc enc, EncodeConfig cfg) {
         Result r = new Result();
-        r.hdr = hdr; r.width = w; r.height = h; r.fps = fps; r.bitrate = bitrate;
-        r.encoder = enc == null ? "" : enc.name;
-        if (enc == null) { r.detail = "لا يوجد مرمّز مناسب"; r.hdr10 = hdr ? Hdr10.FAIL : Hdr10.NOT_APPLICABLE; return r; }
+        r.config = cfg; r.systemId = systemId();
+        boolean hdr = cfg.hdr;
+        PathTestVerdict v = r.verdict;
+        v.hdr = hdr;
+        if (enc == null || !enc.name.equals(cfg.encoder)) { r.detail = "المرمّز غير متوفر"; return r; }
         StringBuilder log = new StringBuilder();
         try {
-            Measure m1 = encodeAndMeasure(ctx, enc, r, ColorMath.IDENTITY3, new float[3], log);
-            r.containerTagsOk = m1.containerOk;
-            // decoder configured from the bitstream only: a mismatch is a failure; "not reported" is
-            // not evidence either way (the HDR decision then rests on the independent SPS/VUI parse)
-            r.decoderTagsOk = m1.decoderOk || !m1.decoderReported;
-            r.decoderTagsReported = m1.decoderReported;
+            Measure m1 = encodeAndMeasure(ctx, enc, cfg, ColorMath.IDENTITY3, new float[3], log);
             int targetMatrix = hdr ? 1 : 0;
             Fit best = fit(m1);
             log.append("أفضل مطابقة للمصفوفة: ").append(best.describe()).append(String.format(Locale.US, " (RMS %.2f code عند %d-bit)", best.rms, m1.bits)).append('\n');
@@ -173,35 +168,38 @@ public final class EncodeSelfTest {
                 log.append("الصورة في الملف مقلوبة رأسياً – المسار غير صالح\n");
                 r.rmsCodes = best.rms;
             } else if (best.rms <= tol && best.matrix == targetMatrix && !best.full) {
-                r.colour = Verdict.PASS; r.rmsCodes = best.rms;
+                r.colour = Colour.PASS; r.rmsCodes = best.rms;
             } else if (best.rms <= tol) {
                 double[][] target = ColorMath.rgbToYuvAffine(targetMatrix, false, m1.bits);
                 double[][] actual = ColorMath.rgbToYuvAffine(best.matrix, best.full, m1.bits);
                 float[][] c = ColorMath.compensation(target, actual);
-                Measure m2 = encodeAndMeasure(ctx, enc, r, c[0], c[1], log);
+                Measure m2 = encodeAndMeasure(ctx, enc, cfg, c[0], c[1], log);
                 Fit f2 = fit(m2);
                 log.append("بعد التصحيح: ").append(f2.describe()).append(String.format(Locale.US, " (RMS %.2f code)", f2.rms)).append('\n');
                 r.rmsCodes = f2.rms;
                 if (f2.matrix == targetMatrix && !f2.full && f2.rms <= tol && !f2.flipped) {
-                    r.colour = Verdict.CORRECTED; r.comp = c[0]; r.compOffset = c[1]; fin = m2;
+                    r.colour = Colour.CORRECTED; r.comp = c[0]; r.compOffset = c[1]; fin = m2;
                 }
             } else r.rmsCodes = best.rms;
+            String rms = r.rmsCodes >= 0 ? String.format(Locale.US, "RMS %.2f code", r.rmsCodes) : "";
+            v.colour = r.colour == Colour.PASS ? Check.pass("دقة الألوان", rms)
+                    : r.colour == Colour.CORRECTED ? Check.pass("دقة الألوان", "بعد تصحيح مصفوفة المرمّز، أعيد التحقق · " + rms)
+                    : Check.fail("دقة الألوان", best.describe() + " · " + rms);
+            v.containerTags = Check.of(fin.containerOk, "وسوم الحاوية", fin.containerTags);
+            // decoder configured from the bitstream only: a mismatch is a failure; "not reported" is
+            // not evidence either way (the HDR decision then rests on the independent SPS/VUI parse)
+            v.decoderTags = !fin.decoderReported ? Check.inconclusive("وسوم المفكك (من البتستريم فقط)", "لم يبلغ عنها المفكك")
+                    : Check.of(fin.decoderOk, "وسوم المفكك (من البتستريم فقط)", fin.decoderTags);
             if (hdr) {
-                HevcBitstream.Info bi = fin.bitstream;
-                boolean seiOk = bi != null && bi.mdcvFound && Math.abs(bi.mdcvMaxLum / 10000.0 - fin.meta.masterPeakNits) <= 1
-                        && bi.cllFound && bi.maxCll == fin.meta.maxCll && bi.maxFall == fin.meta.maxFall;
-                r.bitstreamOk = bi != null && bi.isHdr10Signal() && seiOk;
-                if (bi != null && !seiOk) log.append("بيانات SEI غير موجودة أو لا تطابق ما ضُبط في المرمّز\n");
-                r.pixelMeasured = fin.pixels.available;
-                r.rampDistinct = fin.pixels.minCoverage90;
-                r.pixelOk = fin.pixels.rampProves10bit();
-                r.seiInjected = fin.seiInjected;
-                if (!r.usable()) r.hdr10 = Hdr10.FAIL;
-                else r.hdr10 = r.pixelMeasured ? Hdr10.VERIFIED : Hdr10.PARTIAL;
+                v.bitstream = Hdr10FileCheck.signalling(fin.bitstream);
+                Check t = Hdr10FileCheck.finalMetadata(fin.bitstream, fin.meta, fin.scan);
+                v.metadataTransport = Check.restore(t.verdict, "نقل بيانات HDR الثابتة (قيم نموذجية 1000 nit · 987/321)", t.detail);
+                v.gradation = PathTestVerdict.gradation(fin.pixels.status, fin.pixels.minCoverage90, fin.pixels.note);
+                r.rampCoverage90 = fin.pixels.minCoverage90;
+                r.seiSource = fin.seiSource;
             }
         } catch (Throwable t) {
             log.append("خطأ: ").append(t.getMessage()).append('\n');
-            if (hdr) r.hdr10 = Hdr10.FAIL;
         }
         r.detail = log.toString().trim();
         store(ctx, r);
@@ -213,10 +211,12 @@ public final class EncodeSelfTest {
         int bits = 8;
         double[][][] grid = new double[4][4][3];   // [row top-down][col][Y,Cb,Cr] normalised codes
         boolean containerOk, decoderOk, decoderReported;
+        String containerTags = "", decoderTags = "";
         HevcBitstream.Info bitstream;
+        Hdr10FileCheck.IrapScan scan;
         StreamProbe.PixelDepth pixels = new StreamProbe.PixelDepth();
         HdrMetadata meta;
-        boolean seiInjected;
+        String seiSource = "";
     }
 
     private static final class Fit {
@@ -245,7 +245,7 @@ public final class EncodeSelfTest {
         return best;
     }
 
-    private static Measure encodeAndMeasure(Context ctx, DeviceCaps.Enc enc, Result cfg, float[] comp, float[] off, StringBuilder log) throws Exception {
+    private static Measure encodeAndMeasure(Context ctx, DeviceCaps.Enc enc, EncodeConfig cfg, float[] comp, float[] off, StringBuilder log) throws Exception {
         boolean hdr = cfg.hdr;
         int w = cfg.width, h = cfg.height;
         Measure m = new Measure();
@@ -253,19 +253,13 @@ public final class EncodeSelfTest {
         file.delete();
         Egl egl = new Egl(hdr);
         MuxerSink mux = new MuxerSink(file.getAbsolutePath(), 0);
-        VideoEncoder.Config c = new VideoEncoder.Config();
-        c.width = w; c.height = h; c.fps = cfg.fps; c.bitrate = cfg.bitrate; c.hdr = hdr; c.mime = hdr ? DeviceCaps.HEVC : enc.mime;
-        if (hdr) {                                    // same metadata shape as a measured export
-            m.meta = HdrMetadata.p3(1000);
-            m.meta.setMeasured(987, 321, "self-test");
-            c.meta = m.meta;
-        }
+        if (hdr) m.meta = sampleMetadata();           // same metadata shape as a measured export
         VideoEncoder ve = null;
         GlKit k = null;
         Egl.WindowSurface ws = null;
         boolean pqTagged = false;
         try {
-            ve = new VideoEncoder(enc, c, mux);
+            ve = new VideoEncoder(enc, cfg, m.meta, mux);
             ws = egl.createWindowSurface(ve.inputSurface, hdr);
             pqTagged = ws.pqTagged;
             egl.makeCurrent(ws.surface);
@@ -273,8 +267,7 @@ public final class EncodeSelfTest {
             Tex fbo = k.tex(w, h, true);
             float[] patch = new float[48];
             for (int i = 0; i < 16; i++) for (int ch = 0; ch < 3; ch++) patch[i * 3 + ch] = (float) PATCHES_RGB[i][ch];
-            int frames = Math.max(15, Math.round(cfg.fps / 2));
-            long frameNs = Math.round(1e9 / cfg.fps);
+            int frames = (int) Math.max(15, Math.round(cfg.fps.fps() / 2));
             for (int f = 0; f < frames; f++) {
                 Map<String, Object> u = new HashMap<>();
                 u.put("uPatch", patch); u.put("uSize", new float[]{w, h}); u.put("uRamp", new float[]{400f / 1023f, 64f / 1023f});
@@ -283,12 +276,12 @@ public final class EncodeSelfTest {
                 u.put("uIn", fbo); u.put("uComp", comp); u.put("uCompOffset", off); u.put("uLsb", hdr ? 1f / 1023 : 1f / 255);
                 u.put("uDither", false); u.put("uFlipY", false);
                 k.runToSurface("present.frag", u, w, h);
-                egl.swap(ws.surface, f * frameNs);
+                egl.swap(ws.surface, cfg.fps.ptsUs(f) * 1000L);
             }
             ve.signalEndOfInput();
             if (!ve.awaitEos(20000)) throw new IllegalStateException("المرمّز لم ينهِ الملف التجريبي");
             mux.stop();
-            m.seiInjected = ve.seiInjectedFrames > 0;
+            if (ve.seiGuard != null) m.seiSource = ve.seiGuard.describe();
         } finally {
             if (k != null) k.release();
             if (ve != null) ve.release();
@@ -303,12 +296,21 @@ public final class EncodeSelfTest {
         int wantTr = hdr ? MediaFormat.COLOR_TRANSFER_ST2084 : MediaFormat.COLOR_TRANSFER_SDR_VIDEO;
         m.containerOk = intKey(tf, MediaFormat.KEY_COLOR_STANDARD) == wantStd && intKey(tf, MediaFormat.KEY_COLOR_TRANSFER) == wantTr
                 && intKey(tf, MediaFormat.KEY_COLOR_RANGE) == MediaFormat.COLOR_RANGE_LIMITED;
-        log.append("وسوم الحاوية: ").append(tags(tf)).append(m.containerOk ? " ✓" : " ✗").append('\n');
+        m.containerTags = tags(tf);
         ex.selectTrack(0);
         String mime = tf.getString(MediaFormat.KEY_MIME);
         if (hdr && MediaFormat.MIMETYPE_VIDEO_HEVC.equals(mime)) {
             m.bitstream = StreamProbe.inspectBitstream(ex, tf, 3);
             log.append("البتستريم: ").append(m.bitstream.describe()).append('\n');
+            ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            m.scan = new Hdr10FileCheck.IrapScan(m.meta);
+            ByteBuffer sb = ByteBuffer.allocate(16 << 20);
+            while (ex.getSampleTime() >= 0) {
+                sb.clear();
+                int n = ex.readSampleData(sb, 0);
+                if (n > 0) { byte[] au = new byte[n]; sb.position(0); sb.get(au, 0, n); m.scan.add(au); }
+                if (!ex.advance()) break;
+            }
             ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
             int y = h - Math.max(1, h / 64);
             m.pixels = StreamProbe.probePixels(ex, tf, 3, new int[]{w / 16, y, w - w / 16, y + 1}, y);
@@ -358,7 +360,7 @@ public final class EncodeSelfTest {
         m.decoderReported = intKey(outFmt, MediaFormat.KEY_COLOR_STANDARD) >= 0 || intKey(outFmt, MediaFormat.KEY_COLOR_TRANSFER) >= 0;
         m.decoderOk = intKey(outFmt, MediaFormat.KEY_COLOR_STANDARD) == wantStd && intKey(outFmt, MediaFormat.KEY_COLOR_TRANSFER) == wantTr
                 && intKey(outFmt, MediaFormat.KEY_COLOR_RANGE) == MediaFormat.COLOR_RANGE_LIMITED;
-        log.append("وسوم المفكك (من البتستريم فقط): ").append(tags(outFmt)).append(m.decoderOk ? " ✓" : " ✗").append('\n');
+        m.decoderTags = tags(outFmt);
         if (hdr) log.append("سطح EGL موسوم BT.2020 PQ: ").append(pqTagged ? "نعم" : "لا (الألوان تُقاس مباشرة أعلاه)").append('\n');
         return m;
     }

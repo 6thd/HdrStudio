@@ -379,7 +379,32 @@ def step_video():
     os.makedirs(os.path.join(OUT, 'png'), exist_ok=True)
     save_png(os.path.join(OUT, 'png', 'vtest_f24_before_after.png'), np.concatenate([tonemap_preview(sdr_as_pq(src[1])), np.ones((h, 6, 3)), prev[1]], 1))
 
-REQUIRED = [
+JVM_REQUIRED = [
+    'A_black_opener_new_INCONCLUSIVE', 'A_black_opener_v2.1_rejected', 'A_natural_new_CONSISTENT', 'A_natural_8bit_stage_new_SUSPECT_8BIT',
+    'A_hard_signalling_hdr10_pass', 'A_hard_signalling_8bit_fail', 'B_bitrate_change_invalidates', 'B_resolution_change_invalidates',
+    'B_fps_30_vs_29.97_invalidates', 'B_fps_60_vs_59.94_distinct', 'B_v2.1_accepted_29.97_result_for_30fps', 'B_v2.1_ignored_bitrate',
+    'B_sample_values_not_accepted_as_final_measured', 'B_pts_no_accumulated_error', 'c1_both_missing_inserted_annexb',
+    'c1_both_missing_inserted_lengthprefixed', 'c2_mdcv_only_inserts_only_cll_annexb', 'c3_cll_only_inserts_only_mdcv_annexb',
+    'c4_both_present_correct_unchanged_annexb', 'c5a_encoder_cll_conflicts_rejected_annexb', 'c5b_duplicate_conflicting_rejected_annexb',
+    'framing_independent_result', 'ffmpeg_decodes_sei_case1_both_missing', 'ffprobe_reads_sei_sei_case2_mdcv_only',
+    'ffprobe_reads_sei_sei_case3_cll_only', 'D_decoder_ERROR_is_fail_not_partial', 'D_decoder_TIMEOUT_is_fail_not_partial',
+    'D_v2.1_decoder_error_counted_as_partial_success', 'D_no_fully_proven_wording']
+
+def step_jvm():
+    """Records every line of this run's JVM test log (tools/jvmtests/run.sh) as its own check."""
+    log = os.environ.get('JVM_LOG') or os.path.join(OUT, 'jvm_tests.log')
+    lines = open(log, encoding='utf-8', errors='replace').read().splitlines()
+    summary = None
+    for ln in lines:
+        for tag in ('PASS ', 'FAIL ', 'MISSING '):
+            if ln.startswith(tag):
+                name = ln[len(tag):].split(' ', 1)[0]
+                REPORT['jvm:' + name] = {'pass': tag == 'PASS ', 'status': tag.strip(), 'line': ln[:300]}
+        if ln.startswith('JVM SUMMARY'): summary = ln
+    ok('jvm_summary_all_pass_none_missing', summary is not None and ' fail=0 ' in summary + ' ' and ' missing=0 ' in summary + ' ' and 'exit=0' in summary,
+       {'summary': summary, 'log': log})
+
+REQUIRED = ['jvm_summary_all_pass_none_missing'] + ['jvm:' + n for n in JVM_REQUIRED] + [
     'sdr_to_hdr_expand0_is_bt2408_mapping', 'ramp_e1_monotonic_midtones_kept_peak_bounded', 'ramp_e1_g22_monotonic_midtones_kept_peak_bounded',
     'sdr_to_sdr_identity_no_double_transfer', 'sdr_to_sdr_identity_random_colours', 'rand_hdr_e1_hue_preserved_no_negative',
     'rand_hdr_vib_hue_preserved_no_negative', 'pq_to_sdr_monotonic_no_hard_clip', 'pq_to_pq_identity', 'yuv_pq10_ycbcr_to_working_once',

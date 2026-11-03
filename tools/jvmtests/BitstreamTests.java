@@ -47,14 +47,21 @@ public class BitstreamTests {
         HevcBitstream.Info before = HevcBitstream.inspect(Collections.singletonList(noSei));
         com.mojahed.hdrstudio.encode.HdrMetadata meta = com.mojahed.hdrstudio.encode.HdrMetadata.p3(1000);
         meta.setMeasured(987, 321, "test");
-        byte[] sei = meta.toSeiNal();
-        byte[] withSei = HevcBitstream.insertBeforeFirstVcl(noSei, sei);
+        com.mojahed.hdrstudio.encode.HdrSeiGuard guard = new com.mojahed.hdrstudio.encode.HdrSeiGuard(meta);
+        java.util.List<byte[]> outNals = new java.util.ArrayList<>();
+        int perIrapOk = 0, irapCount = 0;
+        for (java.util.List<byte[]> au : StreamUtil.accessUnits(StreamUtil.nals(noSei))) {
+            java.util.List<byte[]> o = StreamUtil.unframe(guard.onAccessUnit(StreamUtil.annexB(au)));
+            if (StreamUtil.irap(o)) { irapCount++; if (StreamUtil.count(o, 137) == 1 && StreamUtil.count(o, 144) == 1) perIrapOk++; }
+            outNals.addAll(o);
+        }
+        byte[] withSei = StreamUtil.annexB(outNals);
         HevcBitstream.Info after = HevcBitstream.inspect(Collections.singletonList(withSei));
         check("sei_injection_parsed_back", !before.mdcvFound && after.isHdr10Signal() && after.mdcvFound && after.cllFound
                 && after.maxCll == 987 && after.maxFall == 321 && after.mdcvMaxLum == 10000000L && after.mdcvMinLum == 50
                 && Arrays.equals(after.mdcvPrimaries, new int[]{13250, 34500, 7500, 3000, 34000, 16000}) && after.mdcvWhiteX == 15635 && after.mdcvWhiteY == 16450,
                 after.describe());
-        check("sei_injection_only_once_and_detected", HevcBitstream.hasMdcv(withSei) && !HevcBitstream.hasMdcv(noSei), "");
+        check("sei_injection_once_per_irap", irapCount > 0 && perIrapOk == irapCount, perIrapOk + "/" + irapCount + " IRAPs carry exactly one 137 and one 144");
         Files.write(Paths.get(d + "/hdr_injected.hevc"), withSei);
         // emulation prevention round trip on adversarial payloads
         java.util.Random rnd = new java.util.Random(3);

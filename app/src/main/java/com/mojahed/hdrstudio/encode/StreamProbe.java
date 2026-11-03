@@ -15,10 +15,10 @@ import java.util.Locale;
 /**
  * Reads what is really inside an encoded video track:
  *  - bitstream: SPS/VUI/SEI parsed by {@link HevcBitstream} from csd-0 and the first access units;
- *  - pixels: decodes frames to raw P010 (when the decoder offers it) and measures whether the
- *    samples actually use 10-bit precision (an 8-bit stage anywhere in the chain leaves only
- *    multiples of 4 in 10-bit codes, i.e. ~0% non-multiples; real 10-bit content with our
- *    +-1 LSB dither gives ~75%).
+ *  - pixels: decodes frames to raw P010 (when the decoder offers it). On the self-test ramp the
+ *    coverage90 metric decides 10-bit precision; on arbitrary content only a diagnostic is
+ *    possible ({@link PixelDiagnostics}) - a black or flat picture is valid with few codes.
+ *    A decoder error or timeout is reported as such, never as "no P010 output".
  */
 public final class StreamProbe {
     private StreamProbe() {}
@@ -56,24 +56,33 @@ public final class StreamProbe {
     }
 
     public static final class PixelDepth {
-        public boolean available;          // decoder delivered 16-bit (P010) samples
-        public double fracNonMultipleOf4;  // over sampled luma codes
+        /** MEASURED, UNSUPPORTED (no P010 output), ERROR / TIMEOUT (the measurement did not happen). */
+        public PathTestVerdict.PixelProbe status = PathTestVerdict.PixelProbe.NOT_RUN;
         public int frames;
+        public final long[] hist = new long[1024];   // decoded luma codes (whole-frame mode)
         public int distinctInRegion = -1;  // distinct luma codes in an optional region (self-test ramp), informative only
         public int minCoverage90 = -1;     // ramp: worst frame's coverage90 (decisive, see PrecisionMetric)
         public String note = "";
 
+        public boolean measured() { return status == PathTestVerdict.PixelProbe.MEASURED; }
+
         public String describe() {
-            if (!available) return "عمق البكسل: غير قابل للتحقق (المفكك لا يخرج P010) " + note;
+            switch (status) {
+                case UNSUPPORTED: return "عمق البكسل: غير قابل للقياس (المفكك لا يخرج P010) " + note;
+                case ERROR: return "عمق البكسل: فشل القياس بخطأ في المفكك " + note;
+                case TIMEOUT: return "عمق البكسل: فشل القياس بانتهاء المهلة (" + frames + " إطار) " + note;
+                case NOT_RUN: return "عمق البكسل: لم يُقس";
+                default: break;
+            }
             if (minCoverage90 >= 0)
                 return String.format(Locale.US, "تدرج 10-bit بعد فك الترميز: %d رمزاً تغطي 90%% من العينات (المطلوب ≥ %d؛ مرحلة 8-bit تعطي نحو 13-18)",
                         minCoverage90, PrecisionMetric.MIN_COVERAGE90_FOR_10BIT);
-            return String.format(Locale.US, "عينات Y'CbCr: %.0f%% ليست مضاعفات 4 (فحص ضعيف: يكشف مرحلة 8-bit على مستوى Y'CbCr فقط)", fracNonMultipleOf4 * 100);
+            return diagnostics().describe();
         }
-        /** Weak check for whole frames: rules out only an 8-bit Y'CbCr stage (decoder/encoder side). */
-        public boolean noEightBitYcbcrStage(double minFraction) { return available && fracNonMultipleOf4 >= minFraction; }
+        /** Whole frames of arbitrary content: diagnostic only, never a pass condition. */
+        public PixelDiagnostics.Result diagnostics() { return PixelDiagnostics.classify(hist); }
         /** Strong check (self-test ramp only): rules out an 8-bit stage anywhere before the encoder too. */
-        public boolean rampProves10bit() { return available && minCoverage90 >= 0 && PrecisionMetric.proves10bit(minCoverage90); }
+        public boolean rampProves10bit() { return measured() && minCoverage90 >= 0 && PrecisionMetric.proves10bit(minCoverage90); }
     }
 
     /**
@@ -88,14 +97,13 @@ public final class StreamProbe {
             dec = MediaCodec.createDecoderByType(mime);
             boolean p010 = false;
             for (int cf : dec.getCodecInfo().getCapabilitiesForType(mime).colorFormats) if (cf == 54) p010 = true;
-            if (!p010) { r.note = "(" + dec.getName() + ")"; return r; }
+            if (!p010) { r.status = PathTestVerdict.PixelProbe.UNSUPPORTED; r.note = "(" + dec.getName() + ")"; return r; }
             MediaFormat f = bitstreamOnly(tf);
             f.setInteger(MediaFormat.KEY_COLOR_FORMAT, 54 /* COLOR_FormatYUVP010 */);
             dec.configure(f, null, null, 0);
             dec.start();
             MediaCodec.BufferInfo bi = new MediaCodec.BufferInfo();
-            boolean in = false;
-            long nonMul = 0, total = 0;
+            boolean in = false, outEos = false;
             java.util.HashSet<Integer> distinct = new java.util.HashSet<>();
             int minCov = Integer.MAX_VALUE;
             long end = System.currentTimeMillis() + 15000;
@@ -114,7 +122,10 @@ public final class StreamProbe {
                     if (bi.size > 0) {
                         Image img = dec.getOutputImage(o);
                         if (img != null) {
-                            if (img.getFormat() != ImageFormat.YCBCR_P010) { img.close(); dec.releaseOutputBuffer(o, false); r.note = "(صيغة الإخراج " + img.getFormat() + ")"; return r; }
+                            if (img.getFormat() != ImageFormat.YCBCR_P010) {
+                                img.close(); dec.releaseOutputBuffer(o, false);
+                                r.status = PathTestVerdict.PixelProbe.UNSUPPORTED; r.note = "(صيغة الإخراج " + img.getFormat() + ")"; return r;
+                            }
                             Image.Plane y = img.getPlanes()[0];
                             ByteBuffer b = y.getBuffer();
                             int w = img.getWidth(), h = img.getHeight(), rs = y.getRowStride(), ps = y.getPixelStride();
@@ -122,9 +133,7 @@ public final class StreamProbe {
                                 for (int yy = 0; yy < h; yy += 3)
                                     for (int xx = 0; xx < w; xx += 3) {
                                         int off = yy * rs + xx * ps;
-                                        int v = ((b.get(off) & 0xFF) | ((b.get(off + 1) & 0xFF) << 8)) >> 6;
-                                        total++;
-                                        if ((v & 3) != 0) nonMul++;
+                                        r.hist[((b.get(off) & 0xFF) | ((b.get(off + 1) & 0xFF) << 8)) >> 6]++;
                                     }
                             } else {                     // only the given row segment (self-test ramp)
                                 int[] codes = new int[region[2] - region[0]];
@@ -132,8 +141,7 @@ public final class StreamProbe {
                                     int off = regionRow * rs + xx * ps;
                                     int v = ((b.get(off) & 0xFF) | ((b.get(off + 1) & 0xFF) << 8)) >> 6;
                                     codes[xx - region[0]] = v;
-                                    distinct.add(v); total++;
-                                    if ((v & 3) != 0) nonMul++;
+                                    distinct.add(v); r.hist[v]++;
                                 }
                                 minCov = Math.min(minCov, PrecisionMetric.coverage90(codes));
                             }
@@ -142,14 +150,15 @@ public final class StreamProbe {
                         }
                     }
                     dec.releaseOutputBuffer(o, false);
-                    if (eos) break;
+                    if (eos) { outEos = true; break; }
                 }
             }
-            r.available = r.frames > 0;
-            r.fracNonMultipleOf4 = total > 0 ? (double) nonMul / total : 0;
+            if (r.frames >= maxFrames || (outEos && r.frames > 0)) r.status = PathTestVerdict.PixelProbe.MEASURED;
+            else if (outEos) { r.status = PathTestVerdict.PixelProbe.ERROR; r.note = "(نهاية المسار دون أي إطار مفكوك)"; }
+            else r.status = PathTestVerdict.PixelProbe.TIMEOUT;
             if (region != null) { r.distinctInRegion = distinct.size(); r.minCoverage90 = minCov == Integer.MAX_VALUE ? -1 : minCov; }
         } catch (Exception e) {
-            r.available = false;
+            r.status = PathTestVerdict.PixelProbe.ERROR;
             r.note = "(خطأ: " + e.getMessage() + ")";
         } finally {
             if (dec != null) try { dec.stop(); dec.release(); } catch (RuntimeException ignored) { }

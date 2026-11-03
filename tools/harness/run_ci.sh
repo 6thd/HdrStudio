@@ -27,5 +27,5 @@ TESTS="compile color sr_reference sr_tiling motion temporal resize_temporal flas
 node "$H/run.js" "$RUN/data" "$RUN/out" $TESTS          # exits non-zero if any test throws
 "$ROOT/tools/jvmtests/run.sh" "$RUN/jvm" | tee "$RUN/out/jvm_tests.log"
 export HEVC_INSPECT_CP="$RUN/jvm" HDR_MEDIA="$W/media"
-python3 "$H/check.py" "$RUN/data" "$RUN/out" color sr motion temporal resize_temporal flash scenecut banding video uhd stills stills_same visual verify
+python3 "$H/check.py" "$RUN/data" "$RUN/out" jvm color sr motion temporal resize_temporal flash scenecut banding video uhd stills stills_same visual verify
 echo "results: $RUN/out/report.json"

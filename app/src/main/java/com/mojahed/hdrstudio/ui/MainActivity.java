@@ -33,8 +33,10 @@ import android.widget.VideoView;
 
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.core.DeviceCaps;
+import com.mojahed.hdrstudio.core.FrameRate;
 import com.mojahed.hdrstudio.core.SourceInfo;
 import com.mojahed.hdrstudio.core.SourceProbe;
+import com.mojahed.hdrstudio.encode.EncodeConfig;
 import com.mojahed.hdrstudio.encode.Presets;
 import com.mojahed.hdrstudio.gl.Egl;
 import com.mojahed.hdrstudio.gl.GlKit;
@@ -278,28 +280,19 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     /** Exactly the plan ExportJob will use (encoder, aligned size, fps); the self test must match it. */
     private ExportJob.Plan plan() {
         if (st.caps == null) return null;
-        if (st.src == null) {
-            ExportJob.Plan pl = new ExportJob.Plan();
-            pl.w = 1920; pl.h = 1080; pl.fps = 30;
-            pl.enc = preset().hdr ? st.caps.pickHdrEncoder(1920, 1080, 30) : st.caps.pickSdrEncoder(preset().mime, 1920, 1080, 30);
-            return pl;
-        }
-        return ExportJob.planOutput(st.caps, st.src, preset(), targetShort());
+        if (st.src == null) return ExportJob.planFor(st.caps, preset(), 1920, 1080, FrameRate.FPS_30, 0);
+        return ExportJob.planOutput(st.caps, st.src, preset(), targetShort(), bitrate());
     }
 
     private DeviceCaps.Enc plannedEncoder() { ExportJob.Plan p = plan(); return p == null || p.error != null ? null : p.enc; }
 
-    private String selfTestKey(ExportJob.Plan p) {
-        return (preset().hdr ? "h:" : "s:") + p.enc.name + ":" + p.w + "x" + p.h + ":" + String.format(Locale.US, "%.3f", p.fps);
-    }
-
     private EncodeSelfTest.Result currentSelfTest() {
         ExportJob.Plan p = plan();
-        if (p == null || p.enc == null || p.error != null) return null;
-        String key = selfTestKey(p);
+        if (p == null || p.config == null || p.error != null) return null;
+        String key = p.config.canonical();
         EncodeSelfTest.Result r = st.selfTests.get(key);
         if (r == null) {
-            r = EncodeSelfTest.load(this, preset().hdr, p.enc.name, p.w, p.h, p.fps);
+            r = EncodeSelfTest.load(this, p.config);
             if (r != null) st.selfTests.put(key, r);
         }
         return r;
@@ -313,8 +306,8 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         if (e == null) selfTestText.setText(st.caps == null ? "" : "لا يوجد مرمّز مناسب لهذا الإخراج");
         else if (r == null) {
             ExportJob.Plan pl = plan();
-            selfTestText.setText("لم يُفحص مسار " + (preset().hdr ? "HDR10" : "SDR") + " بهذا الإعداد بالضبط (" + e.name + " · " + pl.w + "×" + pl.h
-                    + String.format(Locale.US, " · %.3f fps", pl.fps) + "). التصدير يتطلب الفحص بنفس الإعداد.");
+            selfTestText.setText("لم يُفحص مسار " + (preset().hdr ? "HDR10" : "SDR") + " بهذا الإعداد بالضبط (" + pl.config.describe()
+                    + "). التصدير يتطلب الفحص بنفس الإعداد؛ تغيير معدل البت أو الدقة أو معدل الإطارات يتطلب فحصاً جديداً.");
         }
         else selfTestText.setText(r.summary());
         boolean hdrSrc = st.src != null && st.src.isHdr();
@@ -373,15 +366,12 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         final ExportJob.Plan pl = plan();
         if (pl == null || pl.enc == null) { toastText("لا يوجد مرمّز"); return; }
         if (pl.error != null) { selfTestText.setText(pl.error); return; }
-        final boolean hdr = preset().hdr;
-        final long br = st.src != null ? bitrate() : preset().startBitrate(pl.w, pl.h, pl.fps);
-        final String key = selfTestKey(pl);
-        selfTestText.setText(String.format(Locale.US, "جارٍ الفحص بإعداد التصدير (%s · %d×%d · %.3f fps): أنماط معروفة ← ترميز ← تحليل البتستريم ← فك ترميز ← قياس…",
-                pl.enc.name, pl.w, pl.h, pl.fps));
+        final EncodeConfig cfg = pl.config;
+        selfTestText.setText("جارٍ الفحص بإعداد التصدير (" + cfg.describe() + "): أنماط معروفة ← ترميز ← تحليل البتستريم ← فك ترميز ← قياس…");
         selfTestBtn.setEnabled(false);
         bg(new Runnable() { @Override public void run() {
-            final EncodeSelfTest.Result r = EncodeSelfTest.run(getApplicationContext(), pl.enc, hdr, pl.w, pl.h, (float) pl.fps, br);
-            st.selfTests.put(key, r);
+            final EncodeSelfTest.Result r = EncodeSelfTest.run(getApplicationContext(), pl.enc, cfg);
+            st.selfTests.put(cfg.canonical(), r);
             ui(new Runnable() { @Override public void run() { selfTestBtn.setEnabled(true); refreshAll(); } });
         }});
     }
