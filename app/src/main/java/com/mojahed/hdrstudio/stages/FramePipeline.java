@@ -24,7 +24,7 @@ import java.util.Map;
 public final class FramePipeline {
     public static final class Info {
         public boolean cut; public double sigma, sigmaPost, expand = Double.NaN, cutD, cutHd;
-        public int tiles; public long aiMs, aiReadMs, aiNetMs, aiUploadMs, totalMs;
+        public int tiles; public long aiMs, aiReadMs, aiExtractMs, aiUploadMs, totalMs;
     }
 
     /** Called between AI tiles (cancel / thermal checks); may throw to stop the frame. */
@@ -203,7 +203,7 @@ public final class FramePipeline {
             float[] rgb = new float[n * 3];
             for (int i = 0; i < n; i++) { rgb[i * 3] = px[i * 4]; rgb[i * 3 + 1] = px[i * 4 + 1]; rgb[i * 3 + 2] = px[i * 4 + 2]; }
             NcnnSr.Forward f = ncnn.forward(rgb, lrIn.w, lrIn.h, p.aiTile, gate);
-            info.aiNetMs = f.networkNs / 1_000_000L;
+            info.aiExtractMs = f.extractNs / 1_000_000L;
             info.tiles = f.tiles;
             if (!f.fullVulkan) throw new IllegalStateException("ncnn ليس Vulkan بالكامل: " + ncnn.reason);
             int hrW = lrIn.w * 4, hrH = lrIn.h * 4;

@@ -344,8 +344,8 @@ public final class ExportJob implements Runnable {
                 prevPts = fs.ptsUs;
                 Tex out = pipe.process(in, dt);
                 if (n == 0 && p.ai) {
-                    report.append(String.format(Locale.US, "أول إطار AI: كلي %d ms · قراءة %d · شبكة %d · رفع %d · بلاطات %d\n",
-                            pipe.info.aiMs, pipe.info.aiReadMs, pipe.info.aiNetMs, pipe.info.aiUploadMs, pipe.info.tiles));
+                    report.append(String.format(Locale.US, "أول إطار AI: كلي %d ms · قراءة %d · extract شاملاً النقل الداخلي والمزامنة %d · رفع %d · بلاطات %d\n",
+                            pipe.info.aiMs, pipe.info.aiReadMs, pipe.info.aiExtractMs, pipe.info.aiUploadMs, pipe.info.tiles));
                 }
                 if (hdrOut && passes == 1 && n % 4 == 0) {
                     double[] l = pipe.measureLight();

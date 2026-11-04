@@ -6,6 +6,7 @@
 #include <jni.h>
 #include <net.h>
 #include <gpu.h>
+#include "srvgg_ncnn_model.h"
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -20,6 +21,8 @@ static std::string g_device;
 static bool g_gpu_ready = false;
 
 struct NetHolder {
+    // Destroyed after net. load_model() keeps pointers into model.
+    std::vector<unsigned char> model;
     ncnn::Net net;
     bool fp16 = false;
     bool full_vulkan = false;
@@ -50,52 +53,6 @@ static bool ensure_gpu() {
     return true;
 }
 
-static std::string make_param() {
-    // 1 input + 33 (conv+prelu) + final conv = 68 layers
-    // blobs: data + 33 conv + 33 prelu + final = 68
-    std::ostringstream p;
-    p << "7767517\n68 68\n";
-    p << "Input in 0 1 data\n";
-    std::string prev = "data";
-    for (int L = 0; L < 33; L++) {
-        int oc = 64, ic = L == 0 ? 3 : 64;
-        int wds = oc * ic * 9;
-        std::string c = "c" + std::to_string(L), r = "p" + std::to_string(L);
-        p << "Convolution conv" << L << " 1 1 " << prev << " " << c
-          << " 0=" << oc << " 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 5=1 6=" << wds << "\n";
-        p << "PReLU prelu" << L << " 1 1 " << c << " " << r << " 0=64\n";
-        prev = r;
-    }
-    p << "Convolution conv33 1 1 " << prev << " c33 0=48 1=3 11=3 2=1 12=1 3=1 13=1 4=1 14=1 5=1 6=27648\n";
-    return p.str();
-}
-
-static bool build_bin(const unsigned char* bytes, int nbytes, std::vector<float>& bin) {
-    if (nbytes != 4853184) { set_err("model blob size " + std::to_string(nbytes) + " != 4853184"); return false; }
-    std::vector<float> w(nbytes / 4);
-    std::memcpy(w.data(), bytes, nbytes);
-    int o[34], c[34];
-    o[0] = 64; c[0] = 3;
-    for (int i = 1; i <= 32; i++) { o[i] = 64; c[i] = 64; }
-    o[33] = 48; c[33] = 64;
-    size_t off = 0;
-    bin.clear();
-    for (int L = 0; L < 34; L++) {
-        size_t nw = (size_t)o[L] * c[L] * 9;
-        if (off + nw + o[L] > w.size()) { set_err("weight parse overflow"); return false; }
-        bin.insert(bin.end(), w.begin() + off, w.begin() + off + nw);
-        off += nw;
-        bin.insert(bin.end(), w.begin() + off, w.begin() + off + o[L]);
-        off += o[L];
-        if (L < 33) {
-            if (off + 64 > w.size()) { set_err("prelu parse overflow"); return false; }
-            bin.insert(bin.end(), w.begin() + off, w.begin() + off + 64);
-            off += 64;
-        }
-    }
-    if (off != w.size()) { set_err("weight parse leftover"); return false; }
-    return true;
-}
 
 static void shuffle_residual(const ncnn::Mat& conv, const ncnn::Mat& in, float* out) {
     // conv and in are top-down (ncnn y=0 is the top row), matching tools/srvgg_reference.py.
@@ -137,11 +94,13 @@ JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(JNIEnv
     if (!ensure_gpu()) return 0;
     jbyte* bytes = e->GetByteArrayElements(model, nullptr);
     jsize n = e->GetArrayLength(model);
-    std::vector<float> bin;
-    bool ok = build_bin(reinterpret_cast<const unsigned char*>(bytes), n, bin);
+    if (n != 4853184) { set_err("model blob size " + std::to_string(n) + " != 4853184"); e->ReleaseByteArrayElements(model, bytes, JNI_ABORT); return 0; }
+    std::vector<float> weights(n / 4);
+    std::memcpy(weights.data(), bytes, n);
     e->ReleaseByteArrayElements(model, bytes, JNI_ABORT);
-    if (!ok) return 0;
     NetHolder* h = new NetHolder();
+    std::string berr;
+    if (!srvgg_build_ncnn_bin(weights.data(), weights.size(), h->model, berr)) { set_err(berr); delete h; return 0; }
     h->fp16 = fp16 == JNI_TRUE;
     h->gpu_index = 0;
     ncnn::VulkanDevice* vk = ncnn::get_gpu_device(0);
@@ -158,10 +117,15 @@ JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(JNIEnv
     opt.num_threads = 1;
     h->net.opt = opt;
     h->net.set_vulkan_device(vk);
-    std::string param = make_param();
+    std::string param = srvgg_ncnn_param();
     if (h->net.load_param_mem(param.c_str()) != 0) { set_err("load_param_mem failed"); delete h; return 0; }
-    const unsigned char* mem = reinterpret_cast<const unsigned char*>(bin.data());
-    if (h->net.load_model(mem) != 0) { set_err("load_model failed"); delete h; return 0; }
+    // References h->model. The vector is a member and outlives the Net.
+    int consumed = h->net.load_model(h->model.data());
+    if (consumed != (int)h->model.size()) {
+        set_err("load_model consumed " + std::to_string(consumed) + " of " + std::to_string(h->model.size()));
+        delete h;
+        return 0;
+    }
     h->full_vulkan = true;
     for (size_t i = 0; i < h->net.layers().size(); i++) {
         const ncnn::Layer* layer = h->net.layers()[i];
@@ -225,6 +189,7 @@ JNIEXPORT jint JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeForward(
     if (phaseNs && e->GetArrayLength(phaseNs) >= 3) {
         jlong ph[3];
         ph[0] = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        // extract() waits until the GPU result is in CPU memory. This is not GPU-compute alone.
         ph[1] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
         ph[2] = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
         e->SetLongArrayRegion(phaseNs, 0, 3, ph);

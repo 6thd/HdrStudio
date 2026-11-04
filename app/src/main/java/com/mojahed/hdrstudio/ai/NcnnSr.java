@@ -29,7 +29,8 @@ public final class NcnnSr {
     public static final class Forward {
         public float[] rgb;
         public int w, h;
-        public long packNs, networkNs, shuffleNs, tileCopyNs;
+        /** packNs packs the CPU mat. extractNs is extract(), including its internal transfer and sync, not GPU compute alone. */
+        public long packNs, extractNs, shuffleNs, tileCopyNs;
         public int tiles;
         public boolean fullVulkan;
     }
@@ -104,7 +105,7 @@ public final class NcnnSr {
                 int rc = nativeForward(handle, window, F, F, hr, phase);
                 if (rc < 0) throw new IllegalStateException("ncnn forward: " + nativeLastError());
                 if (rc == 2) f.fullVulkan = false;
-                f.packNs += phase[0]; f.networkNs += phase[1]; f.shuffleNs += phase[2];
+                f.packNs += phase[0]; f.extractNs += phase[1]; f.shuffleNs += phase[2];
                 int x1 = P, y1 = P;
                 for (int y = 0; y < ch * 4; y++) {
                     int sy = (y1 * 4 + y) * (F * 4) + x1 * 4;

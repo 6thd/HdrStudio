@@ -1,0 +1,19 @@
+dll C:\Users\ThinkPad\Documents\Cursor\_env\ncnn\win2022\ncnn-20250503-windows-vs2022-shared\x64\bin\ncnn.dll
+tiny_conv 2.5
+fp32_max_abs 1.430511474609375e-06
+after_wipe_max_abs nan
+weights_are_referenced
+cpu_fp16_flags_max_abs 1.430511474609375e-06
+cpu_fp16_elemsize 4
+cpu_fp16_flags_did_not_change_fp32
+[0 Intel(R) UHD Graphics]  queueC=0[1]  queueG=0[1]  queueT=0[1]
+[0 Intel(R) UHD Graphics]  bugsbn1=0  bugbilz=0  bugcopc=0  bugihfa=0
+[0 Intel(R) UHD Graphics]  fp16-p/s/u/a=1/1/1/1  int8-p/s/u/a=1/1/1/1
+[0 Intel(R) UHD Graphics]  subgroup=32(8~32)  ops=1/1/1/1/1/1/1/1/1/1
+[0 Intel(R) UHD Graphics]  fp16-8x8x16/16x8x8/16x8x16/16x16x16=0/0/0/0
+vulkan_device Intel(R) UHD Graphics
+vulkan_fp16_storage True vulkan_fp16_arithmetic True
+vulkan_fp32_max_abs 1.341104507446289e-06 elemsize 4 elempack 1
+vulkan_fp16_max_abs 0.012815684080123901 elemsize 4 elempack 1
+PASS numeric_ncnn_20250503
+host_vulkan_is_not_maleoon

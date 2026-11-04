@@ -157,11 +157,11 @@ public final class AiEngineCompare {
         long n0 = System.nanoTime();
         NcnnSr.Forward f = ncnn.forward(rgb, w, h, tile, null);
         long n1 = (System.nanoTime() - n0) / 1_000_000L;
-        long net = f.networkNs / 1_000_000L;
+        long extract = f.extractNs / 1_000_000L;
         long xfer = (f.packNs + f.shuffleNs + f.tileCopyNs) / 1_000_000L;
         return String.format(Locale.US,
-                "%s بلاطة %d حرارة %d: GLSL %d ms (يشمل الرسم، بلا قراءة) · ncnn كلي %d ms · شبكة %d ms · نقل/تعبئة %d ms · بلاطات %d · %s\n",
-                label, tile, pm == null ? -1 : pm.getCurrentThermalStatus(), g1, n1, net, xfer, f.tiles,
+                "%s بلاطة %d حرارة %d: GLSL %d ms (يشمل الرسم، بلا قراءة) · ncnn كلي %d ms · extract شاملاً النقل الداخلي والمزامنة %d ms · نقل/تعبئة خارج extract %d ms · بلاطات %d · %s\n",
+                label, tile, pm == null ? -1 : pm.getCurrentThermalStatus(), g1, n1, extract, xfer, f.tiles,
                 f.fullVulkan ? "Vulkan للطبقات" : "ليس Vulkan بالكامل");
     }
 
