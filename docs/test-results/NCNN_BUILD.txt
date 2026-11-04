@@ -1,4 +1,6 @@
 HDR Studio 2.3.1-test
+git_parent: 73030ba68fa4cebe204644345fe62ddd08a55adb
+git_commit: 660a07cfbed9598168f67714fab89bf5d9d9036b
 package: com.mojahed.hdrstudio.test
 versionCode: 8
 versionName: 2.3.1-test

@@ -1,60 +1,52 @@
-built: 2026-11-03T11:00:00Z
-command: :app:clean assembleDebug assembleRelease  (javac ran on this tree; not an incremental leftover)
-branch: work/v2.2
-git_parent: a1a3c7c891ea01b4a7cbe9fb6d10e914b02634c4
-git_commit: f59072e41a811eed2905277e680ed622ba90e11d
+built: 2026-11-04T11:35:40+03:00
+command: :app:assembleDebug  (javac and the arm64 CMake build ran on this tree)
+branch: work/ncnn-vulkan
+git_parent: 73030ba68fa4cebe204644345fe62ddd08a55adb
+git_commit: 660a07cfbed9598168f67714fab89bf5d9d9036b
 javac: javac 17.0.20.1
 compileSdk: 35
 minSdk: 29
 targetSdk: 34
-versionCode: 4
-versionName debug: 2.2-test
-versionName release: 2.2
+ndk: 27.2.12479018
+cmake: 3.22.1
+ncnn: 20250503 android-vulkan
+versionCode: 8
+versionName debug: 2.3.1-test
 applicationId debug: com.mojahed.hdrstudio.test
-applicationId release: com.mojahed.hdrstudio
 
-# Source that was actually compiled into the APKs (not the dirty-tree build labelled 2.1)
-sources_sha256 (sha256 of path+content over app/src/main, 75 files):
-  b4772cf60513c1def05a4e01f206cf052f1dbf600154cd0e9ecbd048d1080cf0
-acceptance_source_sha256 (check.py over app/src/main/{java,assets} + tools/harness):
-  a7bfb8af649202ad498b25c2e8dd1803a72024fbea870b8bca769ce0fd89e804
-harness_source_sha256 (tools/harness, 461 files):
-  8fa3dba331943edab9d3d7ce1ee9bf4ce109843086d5e443a533adbf1ba7f806
-jvmtests_source_sha256 (tools/jvmtests):
-  1aadc9889e0dca5bd093c2bda4b2c59858c59840d2dd8c35d6ec40aa5b9bb853
+# git_commit is the source compiled into the APK. This file is added by the following
+# record commit and does not change app/src/main, so sources_sha256 still identifies that tree.
+# 2.3.0-test (73030ba, APK 8e5f9dd7…) is withdrawn: its loader had no FP32 weight tag and freed the buffer.
+sources_sha256 (sha256 of path+content over app/src/main, 82 files):
+  0f91d0775786fc7af0f404f6c3aa463ca6061448e2cc93d0fcaaa50eb54a2955
+harness_source_sha256 (tools/fingerprints.py harness):
+  6d525d9d672c30f9955e5ef4d4a64902bd8eddf80f2a460bfe1561c5a2ffde17
 
 # Debug APK — phone pack (.test, side by side with the installed app)
 debug_apk: app/build/outputs/apk/debug/app-debug.apk
-  copy: C:\Users\ThinkPad\Documents\Cursor\_runs\v22\apk\HDR-Studio-2.2-test.apk
+  copy: C:\Users\ThinkPad\Desktop\HDR-Studio-2.3.1-test.apk
   package: com.mojahed.hdrstudio.test
-  versionCode: 4
-  versionName: 2.2-test
-  size: 5242964
-  apk_sha256: 10f674ac255f797bfadd25f8810c1c044fad8e8d1edd3215f38b46497a429e3d
+  versionCode: 8
+  versionName: 2.3.1-test
+  size: 15900884
+  apk_sha256: 1681a98fc4e6b4e4b7c7f5395bf3d5792ff8431f85ae1cdb87a388d5d400acda
   classes.dex_sha256:  88c696901cfa47d75be8e4e6610a41b3bae0d18583a08bd1f496d3cd6266786f
-  classes2.dex_sha256: 967479c9bd28131d7e281ad8b513122aa030226b2cbd18b3eae80e04e51bb081
-  classes3.dex_sha256: c0bfb38b4ff856a5d39b94185aedaca3db5cbdd978561dc3496a3e2c5064bd5f
-  classes4.dex_sha256: a6606950064fa5359997958b9c55bdbef1d7862eb462c348a0f133e22a8c96f8
-  classes5.dex_sha256: d92c771cc012b4a7f02597ea0df55430368f3aa35975882ec5a16494bc7460c3
-  classes6.dex_sha256: 48c04465e071f4e0ed2e883d2a15206c85f2941e0134f96e9f4c5a2d9c561a0b
-  (classes.dex is the app; classes2–6 are library/desugar dex files)
-
-# Release APK — same signing key, production applicationId (will NOT install over a differently signed com.mojahed.hdrstudio)
-release_apk: app/build/outputs/apk/release/app-release.apk
-  copy: C:\Users\ThinkPad\Documents\Cursor\_runs\v22\apk\HDR-Studio-2.2-release.apk
-  package: com.mojahed.hdrstudio
-  versionCode: 4
-  versionName: 2.2
-  size: 5159593
-  apk_sha256: b8411117d75a6168705b36a6d42fffed7a4e5c2dd841b150bab6731e1490722e
-  classes.dex_sha256: fef183080e5ef8585d9f187ba2ad24e382da9efcd20b6354e7c6e101f14eb163
+  classes2.dex_sha256: 8f9026a2f6b1595a5ad377bd6f9c61d726ad9227550c3619345be8524e2dfb4c
+  classes3.dex_sha256: f346441b6cb32da3037e733f9dea236d504d12f87483b8fd4a85042aae8c6325
+  classes4.dex_sha256: ee0dc749941ca9ef5b75d3c2e32fd707881b210f5c60dac919a0eceabef39fe7
+  classes5.dex_sha256: f7cb9ce3b5b6895d95fd9e2684426171e83350b6310d475de288c83729eaa3f5
+  classes6.dex_sha256: 1aa00fd53e5ee4bd14a06e2980664c6930a5caa82ab4937ea49d729a9325ae2c
+  classes.dex is the 1092-byte multidex stub. aiExtractMs is in classes3.dex and classes6.dex.
+  extractNs is in classes5.dex and classes6.dex. networkNs is absent.
+  native: lib/arm64-v8a/libhdrstudio_ncnn.so
+  ELF LOAD alignment: 0x4000
 
 # Signing (local test key; not in the repo)
 signing: CN=HDR Studio local test build
 signer_cert_sha256: 4cc961176a1b9b25fb1c8560b42bd58398e47af8980362e05120c490dd723dc4
 signer_cert_sha1:   9ead238cf1b7bc135fc9bd66d1afef838b6fcf7b
 signer_cert_md5:    7e9b00c27188c7b97d112f1e1cd57474
-note: this is NOT the key of an already-installed com.mojahed.hdrstudio. The .test package installs side by side. Installing the release APK over a differently signed com.mojahed.hdrstudio requires uninstall (that package's settings/data are removed).
 
-rebuild: JDK 17, Android SDK 35, Gradle wrapper, HDR_KEYSTORE / HDR_KEYSTORE_PASSWORD / HDR_KEY_ALIAS / HDR_KEY_PASSWORD. Without that keystore the APK hashes will differ.
-acceptance: v2.2 desktop gate is docs/test-results/V22_ACCEPTANCE.txt (70/70). 30/30 was v2.1 only. Phone results are untested. 60fps is later.
+numeric log: docs/test-results/NCNN_NUMERIC.txt
+ncnn 20250503 x64, 8x8, not Maleoon 935F: FP32 max abs 1.43e-6; weight wipe yields NaN; Vulkan FP16 on this machine's Intel UHD Graphics max abs 0.0128 with elemsize 4. CPU FP16 flags did not change the FP32 result.
+Phone comparison is still to run, only with this APK. The default engine stays GLSL.
