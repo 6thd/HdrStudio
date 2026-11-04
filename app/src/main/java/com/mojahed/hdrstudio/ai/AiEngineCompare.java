@@ -38,6 +38,7 @@ public final class AiEngineCompare {
         StringBuilder r = new StringBuilder();
         r.append("فحص المسار المقسّم لـ ncnn — ليس نتيجة تصدير HDR\n");
         r.append(com.mojahed.hdrstudio.core.BuildIdentity.describe(ctx)).append('\n');
+        r.append("مكوّن ncnn: ").append(ncnnIdentity(ctx)).append('\n');
         r.append("الجهاز: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
                 .append(" API ").append(android.os.Build.VERSION.SDK_INT).append('\n');
         r.append("النموذج: realesr-general-x4v3 SRVGGNetCompact · الأوزان sha256=b21527dda6ac91a00574295259bbbd5690afa9334ca49416ed35244ee1a512d3 (لم تتغير)\n");
@@ -107,10 +108,10 @@ public final class AiEngineCompare {
         r.append("الجهاز: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
                 .append(" API ").append(android.os.Build.VERSION.SDK_INT).append('\n');
         android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        long build = versionCode(ctx), saved = sp.getLong("versionCode", -1);
         String keys = sp.getString("accepted", "");
-        if (saved != build) {
-            r.append("لا يوجد قبول محفوظ لهذه النسخة (").append(build).append("). شغّل «فحص بلاطات ncnn ثم المقارنة» أولاً.\n");
+        r.append("مكوّن ncnn: ").append(ncnnIdentity(ctx)).append('\n');
+        if (!sameNcnn(ctx, sp, "acceptedNcnn", "versionCode")) {
+            r.append("لا يوجد قبول محفوظ لمكوّن ncnn هذا (المكتبة الأصلية أو المسار تغيّر). شغّل «فحص بلاطات ncnn ثم المقارنة» أولاً.\n");
             return r.toString();
         }
         java.util.List<NcnnSr.Opts> modes = new java.util.ArrayList<>();
@@ -128,7 +129,7 @@ public final class AiEngineCompare {
         StringBuilder k = new StringBuilder();
         for (NcnnSr.Opts o : accepted) { if (k.length() > 0) k.append(','); k.append(keyOf(o)); }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putLong("versionCode", versionCode(ctx)).putString("accepted", k.toString())
+                .putLong("versionCode", versionCode(ctx)).putString("acceptedNcnn", ncnnIdentity(ctx)).putString("accepted", k.toString())
                 .putLong("time", System.currentTimeMillis()).apply();
     }
 
@@ -139,14 +140,16 @@ public final class AiEngineCompare {
      */
     public static NcnnSr.Opts exportMode(Context ctx) {
         android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (sp.getLong("exportModeBuild", -1) == versionCode(ctx) && "vulkanFp16Storage".equals(sp.getString("exportMode", "")))
+        if (sameNcnn(ctx, sp, "exportModeNcnn", "exportModeBuild") && "vulkanFp16Storage".equals(sp.getString("exportMode", "")))
             return NcnnSr.Opts.vulkanFp16Storage();
         return NcnnSr.Opts.vulkanFp32();
     }
 
     public static String exportModeReason(Context ctx) {
         android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        return sp.getLong("exportModeBuild", -1) == versionCode(ctx) ? sp.getString("exportModeWhy", "") : "لم يُقرَّر لهذه النسخة بعد: Vulkan FP32";
+        if (!sameNcnn(ctx, sp, "exportModeNcnn", "exportModeBuild")) return "لم يُقرَّر لمكوّن ncnn هذا بعد: Vulkan FP32";
+        String from = sp.getString("exportModeNcnn", null) == null ? " (قرار قياس 2.3.7 على المكتبة الأصلية نفسها " + ncnnIdentity(ctx) + ")" : "";
+        return sp.getString("exportModeWhy", "") + from;
     }
 
     /** Clean-run result of one mode's timing pair. */
@@ -177,9 +180,47 @@ public final class AiEngineCompare {
                     f16.ncnnMedNs / 1e9, f32.ncnnMedNs / 1e9, f16.glslMedNs / 1e9);
         } else why = String.format(Locale.US, "تخزين FP16 لم يكن أسرع من الاثنين (%.2f ث مقابل FP32 %.2f ث وGLSL %.2f ث): يبقى Vulkan FP32.",
                 f16.ncnnMedNs / 1e9, f32.ncnnMedNs / 1e9, f16.glslMedNs / 1e9);
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong("exportModeBuild", versionCode(ctx))
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong("exportModeBuild", versionCode(ctx)).putString("exportModeNcnn", ncnnIdentity(ctx))
                 .putString("exportMode", mode).putString("exportModeWhy", why).apply();
-        r.append("\nوضع ncnn التجريبي للتصدير في هذه النسخة: ").append(optsOf(mode).label()).append(". ").append(why).append(" GLSL يبقى الافتراضي.\n");
+        r.append("\nوضع ncnn التجريبي للتصدير لمكوّن ncnn هذا: ").append(optsOf(mode).label()).append(". ").append(why).append(" GLSL يبقى الافتراضي.\n");
+    }
+
+    /**
+     * Identity of what was checked and timed: the ncnn Java path revision and the SHA-256 of the native library
+     * inside the installed APK. Acceptance and the export-mode decision are valid for exactly this identity, so a
+     * rebuild that does not touch ncnn keeps them and any change to the library or the path drops them.
+     */
+    private static String ncnnIdCache;
+
+    public static synchronized String ncnnIdentity(Context ctx) {
+        if (ncnnIdCache != null) return ncnnIdCache;
+        String lib = "غير موجودة";
+        try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(ctx.getApplicationInfo().sourceDir)) {
+            java.util.zip.ZipEntry e = z.getEntry("lib/arm64-v8a/libhdrstudio_ncnn.so");
+            if (e != null) {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                try (java.io.InputStream in = z.getInputStream(e)) {
+                    byte[] buf = new byte[1 << 16];
+                    for (int n; (n = in.read(buf)) > 0; ) md.update(buf, 0, n);
+                }
+                StringBuilder h = new StringBuilder();
+                for (byte x : md.digest()) h.append(String.format(Locale.US, "%02x", x & 0xFF));
+                lib = h.toString();
+            }
+        } catch (Exception ex) {
+            lib = "تعذر القراءة: " + ex.getClass().getSimpleName();
+        }
+        ncnnIdCache = NcnnSr.PATH_REV + " lib " + lib;
+        return ncnnIdCache;
+    }
+
+    /** 2.3.7 (versionCode 14) stored by version only; it ran this native library and path revision. */
+    private static final String V237_ID = "ncnn-path-1 lib 3bf0be540cdb45f9f61334cd4935254e5188915d06ffe609ab4dcb1282136d77";
+
+    private static boolean sameNcnn(Context ctx, android.content.SharedPreferences sp, String idKey, String versionKey) {
+        String id = sp.getString(idKey, null), now = ncnnIdentity(ctx);
+        if (id != null) return id.equals(now);
+        return sp.getLong(versionKey, -1) == 14 && V237_ID.equals(now);
     }
 
     private static String keyOf(NcnnSr.Opts o) {

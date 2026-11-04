@@ -349,6 +349,26 @@ public final class MainActivity extends Activity implements JobManager.Listener 
 
     private DeviceCaps.Enc plannedEncoder() { ExportJob.Plan p = plan(); return p == null || p.error != null ? null : p.enc; }
 
+    /**
+     * Why a self test that did run does not allow this export, in one or two lines. A configure refusal is not
+     * "run the test first": the test ran and could not start.
+     */
+    private static String selfTestBlocked(EncodeSelfTest.Result r) {
+        String col = r.verdict.colour == null ? "" : r.verdict.colour.detail;
+        String d = r.detail == null ? "" : r.detail;
+        if (col.contains("VideoEncoder.configure")) {
+            StringBuilder b = new StringBuilder("تعذّر بدء الفحص: رفض المرمّز الإعدادات (VideoEncoder.configure)");
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("errorCode=(-?\\d+)").matcher(d);
+            if (m.find()) b.append(" — رمز الخطأ ").append(m.group(1)).append(String.format(java.util.Locale.US, " (0x%08x)", Long.parseLong(m.group(1)) & 0xFFFFFFFFL));
+            int i = d.indexOf("أول خطوة رُفضت: ");
+            if (i >= 0) { int e = d.indexOf('\n', i); b.append("\n").append(d, i, e < 0 ? d.length() : e); }
+            else if (d.contains("كل خطوات السلّم قُبلت")) b.append("\nكل خطوات تشخيص التهيئة قُبلت منفصلة؛ التفاصيل في نتيجة الفحص.");
+            return b.toString();
+        }
+        if (col.contains("EGL")) return "تعذّر بدء الفحص: فشلت تهيئة EGL. التفاصيل في نتيجة الفحص.";
+        return "فحص مسار التصدير لم يسمح بهذا الإعداد. التفاصيل في نتيجة الفحص.";
+    }
+
     private EncodeSelfTest.Result currentSelfTest() {
         ExportJob.Plan p = plan();
         if (p == null || p.config == null || p.error != null) return null;
@@ -557,7 +577,8 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         Presets ps = preset();
         EncodeSelfTest.Result r = currentSelfTest();
         if (r == null || !r.usable()) {
-            statusText.setText(ps.hdr ? "لا يمكن تصدير HDR10 قبل نجاح «فحص مسار التصدير» على هذا الجهاز. اختر SDR أو شغّل الفحص."
+            statusText.setText(r != null ? selfTestBlocked(r)
+                    : ps.hdr ? "لا يمكن تصدير HDR10 قبل نجاح «فحص مسار التصدير» على هذا الجهاز. اختر SDR أو شغّل الفحص."
                     : "شغّل «فحص مسار التصدير» أولاً للتأكد من صحة الألوان.");
             return;
         }
@@ -580,7 +601,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         PipelineParams pp = params();
         if (!pp.ai) { statusText.setText("فعّل AI أولاً: الاختبار يقارن محركي AI بالإعدادات نفسها."); return; }
         EncodeSelfTest.Result r = currentSelfTest();
-        if (r == null || !r.usable()) { statusText.setText("شغّل «فحص مسار التصدير» أولاً للتأكد من صحة الألوان."); return; }
+        if (r == null || !r.usable()) { statusText.setText(r != null ? selfTestBlocked(r) : "شغّل «فحص مسار التصدير» أولاً للتأكد من صحة الألوان."); return; }
         ExportRequest q = new ExportRequest();
         q.uri = st.uri; q.src = st.src; q.params = pp; q.preset = ps; q.targetShortSide = targetShort();
         q.bitrateOverride = bitrate(); q.measureLight = false; q.keepAudio = audioSwitch.isChecked(); q.selfTest = r;

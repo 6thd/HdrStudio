@@ -208,6 +208,8 @@ public final class EncodeSelfTest {
             if (isConfigureFailure(t)) {
                 v.markNotMeasured("VideoEncoder.configure", t.getMessage());
                 log.append(t.getMessage()).append('\n');
+                // which key the encoder refuses: diagnostic ladder, the export setting stays as it is
+                log.append(com.mojahed.hdrstudio.encode.EncoderProbe.run(enc, cfg));
             } else if (isEglInitFailure(t)) {
                 v.markNotRunBecauseEgl(t.getMessage());
                 log.append("مرحلة الفشل: EGL\n").append(t.getMessage()).append('\n');

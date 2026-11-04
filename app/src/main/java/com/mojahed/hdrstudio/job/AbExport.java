@@ -55,6 +55,7 @@ public final class AbExport {
         r.append(String.format(Locale.US, "الإعدادات: %s · AI دقة العمل %.2f · مقدار %.2f · زمني %s · الصوت %s\n", base.preset.label,
                 base.params.aiWorkScale, base.params.aiAmount, base.params.temporal ? "نعم" : "لا", base.keepAudio ? "يُحفظ" : "يُحذف"));
         r.append("ncnn: ").append(AiEngineCompare.exportMode(ctx).label()).append(" — ").append(AiEngineCompare.exportModeReason(ctx)).append('\n');
+        r.append("مكوّن ncnn: ").append(AiEngineCompare.ncnnIdentity(ctx)).append('\n');
         r.append("الترتيب: GLSL ثم ncnn. انتظار التبريد قبل كل تصدير خارج الزمن المقاس.\n");
         List<ExportJob> jobs = new ArrayList<>();
         int tile = 0;

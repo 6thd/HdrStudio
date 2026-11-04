@@ -36,3 +36,21 @@ GLSL, 71 min with ncnn FP32, 42 min with ncnn FP16 storage. Neither is near real
 Status: no default changes. GLSL stays the default. Experimental ncnn export still uses Vulkan FP32, which
 measured slower than GLSL here; FP16 storage + FP32 arithmetic passed the unchanged accuracy limits and measured
 faster, and is the candidate for the experimental ncnn mode after a confirming repeat.
+
+----------------------------------------------------------------
+Verification run: 2.3.7-test on the phone (2026-11-04 22:40-22:47 +03:00), report NCNN_PHONE_2.3.7.txt
+Identity printed by the phone: 2.3.7-test (14) · commit fff8212cd0bc2a7c8f2d21e6903788311de296d8 · Actions run #7 ·
+APK sha256 ef61acdc061eac68e91dc8c1505cc577f502a54e53b5286263168701296e78f8 (= run #7's BUILD_INFO) · cert 1ffb4f14...4095a.
+Matching: CPU FP32, Vulkan FP32, FP16 storage + FP32 arithmetic all pass, same numbers as 2.3.4-2.3.6.
+Timing (screen kept on, order reversed: FP16 storage first; 960x540 -> 3840x2160, T=512, 1 warm-up + 5 interleaved):
+| mode                              | thermal                          | GLSL five runs (s)              | ncnn five runs (s)             | clean medians      | ratio |
+| FP16 storage + FP32 arith (first) | LIGHT -> MODERATE, no cooling wait | 13.60 13.60 13.60 13.67 13.71 | 8.70 8.59 8.68 8.57 8.60      | 13.60 / 8.60 (5/5) | 0.63  |
+| Vulkan FP32 (second)              | 130 s cooling wait (outside timing), LIGHT -> NONE | 13.70 13.50 13.67 13.64 12.98 | 14.53 14.38 14.36 14.46 14.47 | 13.64 / 14.46 (5/5) | 1.06 |
+All 20 timed runs clean (no background, screen on). The spread is <= 1.3% for ncnn and <= 5% for GLSL, so 2.3.6's
+huge maxima were interruptions. Reversing the order did not change the result: FP16 storage was faster while the
+phone was hotter (MODERATE). ncnn extract 7.60 s (FP16 storage) vs 13.45 s (FP32); CPU PixelShuffle 0.78 s; uploads 0.16 s.
+Decision stored by the app (rule: accepted in the check, >= 3 clean runs per engine in both modes, clean median below
+FP32 and below GLSL in its pair): the experimental ncnn export mode is FP16 storage + FP32 arithmetic. GLSL stays default.
+From 2.3.8 the acceptance and the decision are keyed to the ncnn component (path revision + SHA-256 of the native
+library inside the installed APK), not to versionCode; 2.3.7's decision carries over only if that library is
+byte-identical (3bf0be54...6d77) and the path revision is the same.

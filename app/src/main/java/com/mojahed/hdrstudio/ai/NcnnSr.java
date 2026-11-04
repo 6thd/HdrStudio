@@ -16,6 +16,8 @@ import java.util.Locale;
  */
 public final class NcnnSr {
     public static final String NCNN_TAG = "20250503";
+    /** Revision of the ncnn Java path (TilePlan, forwardTo, options). Bump on any change that can alter results or timing. */
+    public static final String PATH_REV = "ncnn-path-1";
     public static final int P = SrEngine.P;
 
     public final Opts opts;
