@@ -11,6 +11,7 @@ import android.os.Build;
 
 import com.mojahed.hdrstudio.core.ColorMath;
 import com.mojahed.hdrstudio.core.DeviceCaps;
+import com.mojahed.hdrstudio.encode.AvcProfileLevel;
 import com.mojahed.hdrstudio.encode.Check;
 import com.mojahed.hdrstudio.encode.EncodeConfig;
 import com.mojahed.hdrstudio.encode.Hdr10FileCheck;
@@ -159,6 +160,7 @@ public final class EncodeSelfTest {
         v.hdr = hdr;
         if (enc == null || !enc.name.equals(cfg.encoder)) { r.detail = "المرمّز غير متوفر"; return r; }
         StringBuilder log = new StringBuilder();
+        log.append("الإعداد: ").append(cfg.describe()).append('\n');
         try {
             Measure m1 = encodeAndMeasure(ctx, enc, cfg, ColorMath.IDENTITY3, new float[3], log);
             int targetMatrix = hdr ? 1 : 0;
@@ -316,6 +318,8 @@ public final class EncodeSelfTest {
         m.containerTags = tags(tf);
         ex.selectTrack(0);
         String mime = tf.getString(MediaFormat.KEY_MIME);
+        if (MediaFormat.MIMETYPE_VIDEO_AVC.equals(mime))
+            log.append(AvcProfileLevel.compare(cfg.profile, cfg.level, AvcProfileLevel.parseSps(OutputVerifier.csd0(tf)))).append('\n');
         if (hdr && MediaFormat.MIMETYPE_VIDEO_HEVC.equals(mime)) {
             m.bitstream = StreamProbe.inspectBitstream(ex, tf, 3);
             log.append("البتستريم: ").append(m.bitstream.describe()).append('\n');

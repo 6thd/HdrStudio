@@ -4,6 +4,8 @@ import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 
+import com.mojahed.hdrstudio.encode.AvcProfileLevel;
+
 import com.mojahed.hdrstudio.encode.Check;
 import com.mojahed.hdrstudio.encode.Hdr10FileCheck;
 import com.mojahed.hdrstudio.encode.HdrMetadata;
@@ -50,6 +52,12 @@ public final class OutputVerifier {
      * @param meta HDR metadata that was configured (null for SDR) - SEI content must match it.
      */
     public static Report verify(FileDescriptor fd, boolean hdr, int expectedFrames, boolean expectAudio, HdrMetadata meta) {
+        return verify(fd, hdr, expectedFrames, expectAudio, meta, null);
+    }
+
+    /** @param cfg the encode configuration (for the requested AVC profile/level next to the SPS values), may be null */
+    public static Report verify(FileDescriptor fd, boolean hdr, int expectedFrames, boolean expectAudio, HdrMetadata meta,
+                                com.mojahed.hdrstudio.encode.EncodeConfig cfg) {
         Report r = new Report();
         MediaExtractor ex = new MediaExtractor();
         try {
@@ -87,6 +95,10 @@ public final class OutputVerifier {
                     r.add(Check.pass("البتستريم (SPS/VUI)", bi.bitDepthLuma + "-bit" + (bi.colourDescription ? " · BT.709" : " · بلا وصف ألوان")));
                     if (bi.bitDepthLuma != 8) r.warnings.append("ملف SDR بعمق ").append(bi.bitDepthLuma).append("-bit\n");
                 }
+            } else if (MediaFormat.MIMETYPE_VIDEO_AVC.equals(mime)) {
+                AvcProfileLevel.Sps sps = AvcProfileLevel.parseSps(csd0(vf));
+                r.text.append(AvcProfileLevel.compare(cfg == null ? -1 : cfg.profile, cfg == null ? -1 : cfg.level, sps)).append('\n');
+                r.text.append("البتستريم: ").append(mime).append(" - SPS: profile/level فقط؛ لا محلل VUI مستقل (الاعتماد على وسوم الحاوية والمفكك)\n");
             } else {
                 r.text.append("البتستريم: ").append(mime).append(" - لا يوجد محلل مستقل لهذا الترميز (الاعتماد على وسوم الحاوية والمفكك)\n");
             }
@@ -199,5 +211,17 @@ public final class OutputVerifier {
         } finally {
             if (dec != null) try { dec.stop(); dec.release(); } catch (RuntimeException ignored) { }
         }
+    }
+
+    /** csd-0 bytes of a track format, or null. */
+    static byte[] csd0(MediaFormat f) {
+        if (f == null || !f.containsKey("csd-0")) return null;
+        java.nio.ByteBuffer b = f.getByteBuffer("csd-0");
+        if (b == null) return null;
+        java.nio.ByteBuffer d = b.duplicate();
+        d.position(0);
+        byte[] a = new byte[d.remaining()];
+        d.get(a);
+        return a;
     }
 }

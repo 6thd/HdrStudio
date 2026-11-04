@@ -408,7 +408,7 @@ public final class ExportJob implements Runnable {
             }
             // ---------------- verify before publishing
             stage("فحص الملف الناتج");
-            OutputVerifier.Report vr = OutputVerifier.verify(pfd.getFileDescriptor(), hdrOut, n, audio != null, meta);
+            OutputVerifier.Report vr = OutputVerifier.verify(pfd.getFileDescriptor(), hdrOut, n, audio != null, meta, config);
             report.append(vr.text);
             if (vr.warnings.length() > 0) report.append("تنبيهات:\n").append(vr.warnings);
             if (!vr.ok) throw new IllegalStateException("رُفض الملف الناتج ولم يُحفظ:\n" + vr.failures);

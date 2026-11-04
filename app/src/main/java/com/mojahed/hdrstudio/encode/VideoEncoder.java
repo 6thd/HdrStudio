@@ -133,6 +133,7 @@ public final class VideoEncoder {
         line(b, f, "i-frame-interval", false);
         line(b, f, "bitrate-mode", true);
         line(b, f, "profile", true);
+        line(b, f, "level", true);
         line(b, f, "color-standard", true);
         line(b, f, "color-transfer", true);
         line(b, f, "color-range", true);
@@ -189,19 +190,38 @@ public final class VideoEncoder {
 
     /**
      * The encode configuration for this encoder: size aligned down to the encoder's alignment, the
-     * bitrate clamped to its range, VBR when supported, the HDR10 profile when declared.
+     * bitrate clamped to its range, VBR when supported, the HDR10 profile when declared, and for SDR AVC an
+     * explicit profile/level pair the encoder declares (AvcProfileLevel.choose).
      */
     public static EncodeConfig plan(DeviceCaps.Enc enc, boolean hdr, int w, int h, FrameRate fps, long requestedBitrate, float iFrameSec) {
         int wa = Math.max(2, enc.wAlign), ha = Math.max(2, enc.hAlign);
         int aw = Math.max(wa, w / wa * wa), ah = Math.max(ha, h / ha * ha);
         int mode = enc.caps.getEncoderCapabilities().isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
                 ? MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR : EncodeConfig.MODE_DEFAULT;
-        int profile = hdr ? (enc.hdr10Profile ? MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 : MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
-                : enc.mime.equals(DeviceCaps.AVC) ? MediaCodecInfo.CodecProfileLevel.AVCProfileHigh : -1;
-        return new EncodeConfig(hdr, enc.name, enc.mime, profile, aw, ah, fps, enc.clampBitrate(requestedBitrate), mode, iFrameSec,
+        int profile, level = -1;
+        if (hdr) {
+            profile = enc.hdr10Profile ? MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10 : MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10;
+        } else if (enc.mime.equals(DeviceCaps.AVC)) {
+            // Profile and level as one pair the encoder declares (High, else Main, with its highest declared level).
+            AvcProfileLevel.Pair p = AvcProfileLevel.choose(declared(enc));
+            profile = p.profile;
+            level = p.level;
+        } else {
+            profile = -1;
+        }
+        return new EncodeConfig(hdr, enc.name, enc.mime, profile, level, aw, ah, fps, enc.clampBitrate(requestedBitrate), mode, iFrameSec,
                 hdr ? MediaFormat.COLOR_STANDARD_BT2020 : MediaFormat.COLOR_STANDARD_BT709,
                 hdr ? MediaFormat.COLOR_TRANSFER_ST2084 : MediaFormat.COLOR_TRANSFER_SDR_VIDEO,
                 MediaFormat.COLOR_RANGE_LIMITED);
+    }
+
+    /** The encoder's declared {profile, level} pairs. */
+    static int[][] declared(DeviceCaps.Enc enc) {
+        if (enc.caps == null || enc.caps.profileLevels == null) return new int[0][];
+        MediaCodecInfo.CodecProfileLevel[] pl = enc.caps.profileLevels;
+        int[][] r = new int[pl.length][];
+        for (int i = 0; i < pl.length; i++) r[i] = new int[]{pl[i].profile, pl[i].level};
+        return r;
     }
 
     public static MediaFormat buildFormat(EncodeConfig c, HdrMetadata meta) {
@@ -212,6 +232,7 @@ public final class VideoEncoder {
         f.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, c.iFrameSec);
         if (c.bitrateMode != EncodeConfig.MODE_DEFAULT) f.setInteger(MediaFormat.KEY_BITRATE_MODE, c.bitrateMode);
         if (c.profile >= 0) f.setInteger(MediaFormat.KEY_PROFILE, c.profile);
+        if (c.profile >= 0 && c.level >= 0) f.setInteger(MediaFormat.KEY_LEVEL, c.level);
         f.setInteger(MediaFormat.KEY_COLOR_STANDARD, c.colorStandard);
         f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, c.colorTransfer);
         f.setInteger(MediaFormat.KEY_COLOR_RANGE, c.colorRange);

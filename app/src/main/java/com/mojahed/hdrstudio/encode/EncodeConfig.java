@@ -11,7 +11,7 @@ import java.util.Locale;
  * export configures MediaCodec from it, and a stored path-test result is valid only for an equal
  * configuration (same canonical string), the same path-test version and the same system build.
  *
- * Everything here changes what the encoder produces: codec, MIME, profile, aligned size, exact
+ * Everything here changes what the encoder produces: codec, MIME, profile and level, aligned size, exact
  * frame rate, bitrate after the encoder's clamp, bitrate mode, key-frame interval and the colour
  * description. HDR metadata VALUES are deliberately not part of it: the path test proves the
  * metadata transport with sample values, the final values are verified in the exported file.
@@ -25,6 +25,7 @@ public final class EncodeConfig {
     public final boolean hdr;
     public final String encoder, mime;
     public final int profile;              // MediaCodecInfo.CodecProfileLevel value, -1 = encoder default
+    public final int level;                // level paired with the profile (declared by the encoder), -1 = not set
     public final int width, height;        // after encoder alignment
     public final FrameRate fps;
     public final int bitrate;              // bit/s after the encoder's bitrate-range clamp
@@ -34,18 +35,28 @@ public final class EncodeConfig {
 
     public EncodeConfig(boolean hdr, String encoder, String mime, int profile, int width, int height, FrameRate fps,
                         int bitrate, int bitrateMode, float iFrameSec, int colorStandard, int colorTransfer, int colorRange) {
+        this(hdr, encoder, mime, profile, -1, width, height, fps, bitrate, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
+    }
+
+    public EncodeConfig(boolean hdr, String encoder, String mime, int profile, int level, int width, int height, FrameRate fps,
+                        int bitrate, int bitrateMode, float iFrameSec, int colorStandard, int colorTransfer, int colorRange) {
+        if (level >= 0 && profile < 0) throw new IllegalArgumentException("level without profile");
         if (encoder == null || encoder.isEmpty() || mime == null) throw new IllegalArgumentException("encoder and MIME required");
         if (width <= 0 || height <= 0 || bitrate <= 0) throw new IllegalArgumentException("bad size or bitrate");
-        this.hdr = hdr; this.encoder = encoder; this.mime = mime; this.profile = profile; this.width = width; this.height = height;
+        this.hdr = hdr; this.encoder = encoder; this.mime = mime; this.profile = profile; this.level = level; this.width = width; this.height = height;
         this.fps = fps; this.bitrate = bitrate; this.bitrateMode = bitrateMode; this.iFrameSec = iFrameSec;
         this.colorStandard = colorStandard; this.colorTransfer = colorTransfer; this.colorRange = colorRange;
     }
 
-    /** Stable, human-readable, order-fixed description. Two configurations are the same iff these strings are equal. */
+    /**
+     * Stable, human-readable, order-fixed description. Two configurations are the same iff these strings are equal.
+     * The level appears only when one is set, so configurations without a level (HDR10 HEVC) keep their
+     * earlier canonical form and stored results; setting or changing a level changes the string and the key.
+     */
     public String canonical() {
-        return String.format(Locale.US, "cfg%d|%s|enc=%s|mime=%s|profile=%d|%dx%d|fps=%s|br=%d|mode=%d|gop=%.3f|colour=%d/%d/%d",
-                SCHEMA, hdr ? "hdr10" : "sdr", encoder, mime, profile, width, height, fps, bitrate, bitrateMode, iFrameSec,
-                colorStandard, colorTransfer, colorRange);
+        return String.format(Locale.US, "cfg%d|%s|enc=%s|mime=%s|profile=%d%s|%dx%d|fps=%s|br=%d|mode=%d|gop=%.3f|colour=%d/%d/%d",
+                SCHEMA, hdr ? "hdr10" : "sdr", encoder, mime, profile, level >= 0 ? "|level=" + level : "", width, height, fps, bitrate,
+                bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
     }
 
     /**
@@ -59,18 +70,19 @@ public final class EncodeConfig {
     }
 
     public String describe() {
-        return String.format(Locale.US, "%s · %s · %d×%d · %s fps · %.2f Mbps%s · GOP %.1f s", hdr ? "HDR10" : "SDR", encoder, width, height,
-                fps.label(), bitrate / 1e6, bitrateMode == 1 ? " VBR" : bitrateMode == 2 ? " CBR" : bitrateMode == 0 ? " CQ" : "", iFrameSec);
+        return String.format(Locale.US, "%s · %s · %d×%d · %s fps · %.2f Mbps%s · GOP %.1f s%s", hdr ? "HDR10" : "SDR", encoder, width, height,
+                fps.label(), bitrate / 1e6, bitrateMode == 1 ? " VBR" : bitrateMode == 2 ? " CBR" : bitrateMode == 0 ? " CQ" : "", iFrameSec,
+                profile < 0 ? "" : " · profile " + profile + (level >= 0 ? " / level " + level : " (بلا level)"));
     }
 
     public EncodeConfig withBitrate(int b) {
-        return new EncodeConfig(hdr, encoder, mime, profile, width, height, fps, b, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
+        return new EncodeConfig(hdr, encoder, mime, profile, level, width, height, fps, b, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
     }
     public EncodeConfig withSize(int w, int h) {
-        return new EncodeConfig(hdr, encoder, mime, profile, w, h, fps, bitrate, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
+        return new EncodeConfig(hdr, encoder, mime, profile, level, w, h, fps, bitrate, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
     }
     public EncodeConfig withFps(FrameRate f) {
-        return new EncodeConfig(hdr, encoder, mime, profile, width, height, f, bitrate, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
+        return new EncodeConfig(hdr, encoder, mime, profile, level, width, height, f, bitrate, bitrateMode, iFrameSec, colorStandard, colorTransfer, colorRange);
     }
 
     @Override public boolean equals(Object o) { return o instanceof EncodeConfig && ((EncodeConfig) o).canonical().equals(canonical()); }

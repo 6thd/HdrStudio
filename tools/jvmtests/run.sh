@@ -16,10 +16,10 @@ javac --release 11 -encoding UTF-8 -d "$T" \
   "$SRC/encode/HevcBitstream.java" "$SRC/encode/PrecisionMetric.java" "$SRC/encode/EncodeConfig.java" "$SRC/encode/Check.java" \
   "$SRC/encode/PathTestVerdict.java" "$SRC/encode/PixelDiagnostics.java" "$SRC/encode/Hdr10FileCheck.java" "$SRC/encode/HdrSeiGuard.java" \
   "$SRC/core/MemoryBudget.java" "$SRC/core/PreviewCrop.java" "$SRC/core/SourceInfo.java" "$SRC/stages/PipelineParams.java" \
-  "$SRC/ai/TilePlan.java" || exit 1
+  "$SRC/ai/TilePlan.java" "$SRC/encode/AvcProfileLevel.java" || exit 1
 J="$ROOT/tools/jvmtests"
 javac --release 11 -encoding UTF-8 -cp "$T" -d "$T" "$J/JvmTests.java" "$J/BitstreamTests.java" "$J/HevcInspect.java" "$J/StreamUtil.java" \
-  "$J/SeiGuardTests.java" "$J/NotesTests.java" "$J/MemoryTests.java" "$J/PreviewCropTests.java" "$J/TileTests.java" "$J/DiagTests.java" || exit 1
+  "$J/SeiGuardTests.java" "$J/NotesTests.java" "$J/MemoryTests.java" "$J/PreviewCropTests.java" "$J/TileTests.java" "$J/DiagTests.java" "$J/AvcTests.java" || exit 1
 step java -Dstdout.encoding=UTF-8 -cp "$T" JvmTests || rc=1
 step java -Dstdout.encoding=UTF-8 -cp "$T" TileTests || rc=1
 step java -Dstdout.encoding=UTF-8 -cp "$T" DiagTests || rc=1
@@ -33,6 +33,11 @@ else echo "FAIL preview_crop_geometry_java_equals_harness  node or crop_probe.js
 B="$T/streams"; mkdir -p "$B"
 command -v ffmpeg >/dev/null || { echo "FAIL bitstream tests: ffmpeg missing" | tee -a "$LOG"; exit 1; }
 ffmpeg -hide_banner -version | head -1 | sed 's/^/INFO /' | tee -a "$LOG"
+# AVC SPS profile_idc/level_idc read from real x264 streams (Annex B)
+ffmpeg -v error -y -f lavfi -i testsrc2=size=1072x1920:rate=30 -frames:v 2 -c:v libx264 -profile:v high -level:v 5.2 -pix_fmt yuv420p "$B/avc_high_52.h264" \
+ && ffmpeg -v error -y -f lavfi -i testsrc2=size=640x360:rate=30 -frames:v 2 -c:v libx264 -profile:v main -level:v 3.1 -pix_fmt yuv420p "$B/avc_main_31.h264" \
+ && step java -Dstdout.encoding=UTF-8 -cp "$T" AvcTests "$B/avc_high_52.h264=100:52" "$B/avc_main_31.h264=77:31" \
+ || { echo "FAIL avc_tests (x264 streams or checks)" | tee -a "$LOG"; rc=1; }
 X="log-level=error"
 P3="G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)"
 PQ="colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc"

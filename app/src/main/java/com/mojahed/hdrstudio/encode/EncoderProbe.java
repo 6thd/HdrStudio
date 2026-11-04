@@ -25,15 +25,16 @@ public final class EncoderProbe {
 
     public static String run(DeviceCaps.Enc enc, EncodeConfig c) {
         StringBuilder r = new StringBuilder();
-        r.append(String.format(Locale.US, "تشخيص تهيئة المرمّز %s · %s %dx%d · %s fps · %.2f Mbps · وضع %d · profile %d\n",
-                enc.name, c.mime, c.width, c.height, c.fps.label(), c.bitrate / 1e6, c.bitrateMode, c.profile));
+        r.append(String.format(Locale.US, "تشخيص تهيئة المرمّز %s · %s %dx%d · %s fps · %.2f Mbps · وضع %d · profile %d · level %d\n",
+                enc.name, c.mime, c.width, c.height, c.fps.label(), c.bitrate / 1e6, c.bitrateMode, c.profile, c.level));
         r.append(capabilities(enc, c));
         final double fps = c.fps.fps();
-        final int level = maxLevel(enc, c.profile);
+        final int level = c.level >= 0 ? c.level : maxLevel(enc, c.profile);
         Edit fpsFloat = new Edit() { public void apply(MediaFormat f) { f.setFloat(MediaFormat.KEY_FRAME_RATE, (float) fps); } };
         Edit mode = new Edit() { public void apply(MediaFormat f) { if (c.bitrateMode != EncodeConfig.MODE_DEFAULT) f.setInteger(MediaFormat.KEY_BITRATE_MODE, c.bitrateMode); } };
         Edit profile = new Edit() { public void apply(MediaFormat f) { if (c.profile >= 0) f.setInteger(MediaFormat.KEY_PROFILE, c.profile); } };
         Edit lvl = new Edit() { public void apply(MediaFormat f) { if (level > 0) f.setInteger(MediaFormat.KEY_LEVEL, level); } };
+        Edit cfgLvl = new Edit() { public void apply(MediaFormat f) { if (c.profile >= 0 && c.level >= 0) f.setInteger(MediaFormat.KEY_LEVEL, c.level); } };
         Edit tags = new Edit() { public void apply(MediaFormat f) {
             f.setInteger(MediaFormat.KEY_COLOR_STANDARD, c.colorStandard);
             f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, c.colorTransfer);
@@ -46,15 +47,15 @@ public final class EncoderProbe {
                 "1 أساسي: Surface · معدل البت · 30 fps صحيح · فاصل I صحيح 1",
                 "2 + معدل الإطارات الفعلي " + c.fps.label() + " كعدد عشري، وفاصل I عشري",
                 "3 + وضع معدل البت " + c.bitrateMode,
-                "4 + profile " + c.profile + " (بلا level)",
+                "4 + profile " + c.profile + (c.level >= 0 ? " و level " + c.level + " (زوج الإعداد)" : " (بلا level)"),
                 "5 + وسوم الألوان standard " + c.colorStandard + " transfer " + c.colorTransfer + " range " + c.colorRange + " (= صيغة التصدير)",
         };
         Edit[][] steps = {
                 {},
                 {fpsFloat, iFloat},
                 {fpsFloat, iFloat, mode},
-                {fpsFloat, iFloat, mode, profile},
-                {fpsFloat, iFloat, mode, profile, tags},
+                c.level >= 0 ? new Edit[]{fpsFloat, iFloat, mode, profile, lvl} : new Edit[]{fpsFloat, iFloat, mode, profile},
+                c.level >= 0 ? new Edit[]{fpsFloat, iFloat, mode, profile, lvl, tags} : new Edit[]{fpsFloat, iFloat, mode, profile, tags},
         };
         int firstFail = -1;
         for (int i = 0; i < steps.length; i++) {
@@ -66,12 +67,15 @@ public final class EncoderProbe {
 
         r.append("عزل (كل سطر مستقل):\n");
         iso(r, "صيغة التصدير لكن 30 fps", enc, c, c.width, c.height,
-                new Edit[]{new Edit() { public void apply(MediaFormat f) { f.setFloat(MediaFormat.KEY_FRAME_RATE, 30f); } }, iFloat, mode, profile, tags});
-        iso(r, "صيغة التصدير + level " + level + (level > 0 ? "" : " (لا level معلن لهذا profile)"), enc, c, c.width, c.height,
-                new Edit[]{fpsFloat, iFloat, mode, profile, lvl, tags});
+                new Edit[]{new Edit() { public void apply(MediaFormat f) { f.setFloat(MediaFormat.KEY_FRAME_RATE, 30f); } }, iFloat, mode, profile, cfgLvl, tags});
+        if (c.level >= 0)
+            iso(r, "صيغة التصدير بلا level (profile وحده)", enc, c, c.width, c.height, new Edit[]{fpsFloat, iFloat, mode, profile, tags});
+        else
+            iso(r, "صيغة التصدير + level " + level + (level > 0 ? "" : " (لا level معلن لهذا profile)"), enc, c, c.width, c.height,
+                    new Edit[]{fpsFloat, iFloat, mode, profile, lvl, tags});
         iso(r, "صيغة التصدير بلا profile", enc, c, c.width, c.height, new Edit[]{fpsFloat, iFloat, mode, tags});
-        iso(r, "صيغة التصدير بلا وضع معدل البت", enc, c, c.width, c.height, new Edit[]{fpsFloat, iFloat, profile, tags});
-        iso(r, "صيغة التصدير أفقياً " + c.height + "x" + c.width, enc, c, c.height, c.width, new Edit[]{fpsFloat, iFloat, mode, profile, tags});
+        iso(r, "صيغة التصدير بلا وضع معدل البت", enc, c, c.width, c.height, new Edit[]{fpsFloat, iFloat, profile, cfgLvl, tags});
+        iso(r, "صيغة التصدير أفقياً " + c.height + "x" + c.width, enc, c, c.height, c.width, new Edit[]{fpsFloat, iFloat, mode, profile, cfgLvl, tags});
         r.append("لم يتغير إعداد التصدير ولا توقيت الفيديو. هذا تشخيص فقط.\n");
         return r.toString();
     }
