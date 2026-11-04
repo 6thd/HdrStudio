@@ -1,9 +1,15 @@
 package com.mojahed.hdrstudio.stages;
 
+import android.opengl.GLES20;
+
+import com.mojahed.hdrstudio.ai.NcnnSr;
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.gl.GlKit;
 import com.mojahed.hdrstudio.gl.Tex;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,7 +24,7 @@ import java.util.Map;
 public final class FramePipeline {
     public static final class Info {
         public boolean cut; public double sigma, sigmaPost, expand = Double.NaN, cutD, cutHd;
-        public int tiles; public long aiMs, totalMs;
+        public int tiles; public long aiMs, aiReadMs, aiNetMs, aiUploadMs, totalMs;
     }
 
     /** Called between AI tiles (cancel / thermal checks); may throw to stop the frame. */
@@ -40,6 +46,7 @@ public final class FramePipeline {
     private final GlKit k;
     private final PipelineParams p;
     private final SrEngine sr;
+    private NcnnSr ncnn;
     public final int srcW, srcH, outW, outH;
     private final Tex a, b, zero;
     private Tex[] lv = new Tex[4], lvPrev = new Tex[4];
@@ -90,6 +97,8 @@ public final class FramePipeline {
     public Tex output() { return fin; }
 
     public void setTileGate(TileGate g) { gate = g; }
+
+    public void setNcnn(NcnnSr engine) { ncnn = engine; }
 
     public void setRegion(Region r) { region = r; }
 
@@ -180,7 +189,50 @@ public final class FramePipeline {
             info.expand = region != null ? region.expand : scene.adaptExpand(thumb, p.expand, p.knee, dtSec, cut, p.sdrGamma);
         boolean resized = outW != srcW || outH != srcH;
         Tex res;
-        if (p.ai && sr != null) {
+        if (p.ai && p.aiNcnn) {
+            if (ncnn == null || !ncnn.loaded)
+                throw new IllegalStateException("محرك ncnn/Vulkan غير جاهز" + (ncnn == null ? "" : ": " + ncnn.reason) + ". اختر محرك GLSL.");
+            long ta = System.nanoTime();
+            Tex lrIn = cur;
+            if (lr != null) { resize(cur, lr, lrTmp); lrIn = lr; }
+            GLES20.glFinish();
+            long tr0 = System.nanoTime();
+            float[] px = k.read(lrIn);
+            info.aiReadMs = (System.nanoTime() - tr0) / 1000000;
+            int n = lrIn.w * lrIn.h;
+            float[] rgb = new float[n * 3];
+            for (int i = 0; i < n; i++) { rgb[i * 3] = px[i * 4]; rgb[i * 3 + 1] = px[i * 4 + 1]; rgb[i * 3 + 2] = px[i * 4 + 2]; }
+            NcnnSr.Forward f = ncnn.forward(rgb, lrIn.w, lrIn.h, p.aiTile, gate);
+            info.aiNetMs = f.networkNs / 1_000_000L;
+            info.tiles = f.tiles;
+            if (!f.fullVulkan) throw new IllegalStateException("ncnn ليس Vulkan بالكامل: " + ncnn.reason);
+            int hrW = lrIn.w * 4, hrH = lrIn.h * 4;
+            float[] rgba = new float[hrW * hrH * 4];
+            for (int i = 0; i < hrW * hrH; i++) { rgba[i * 4] = f.rgb[i * 3]; rgba[i * 4 + 1] = f.rgb[i * 3 + 1]; rgba[i * 4 + 2] = f.rgb[i * 3 + 2]; rgba[i * 4 + 3] = 1f; }
+            FloatBuffer fb = ByteBuffer.allocateDirect(rgba.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+            fb.put(rgba).position(0);
+            long tu = System.nanoTime();
+            if (aiOut.w == hrW && aiOut.h == hrH) k.upload(aiOut, fb);
+            else {
+                Tex big = k.tex(hrW, hrH, true, fb);
+                m = U();
+                m.put("uSR", big); m.put("uSrOrigin", new float[]{0f, 0f});
+                m.put("uScale", new float[]{aiOut.w / (float) hrW, aiOut.h / (float) hrH});
+                m.put("uSrValid", new int[]{hrW, hrH});
+                k.run("sr_resample.frag", aiOut, m);
+                k.delete(big);
+            }
+            GLES20.glFinish();
+            info.aiUploadMs = (System.nanoTime() - tu) / 1000000;
+            info.aiMs = (System.nanoTime() - ta) / 1000000;
+            Tex base = cur;
+            if (resized) { resize(cur, o1, tmpH); base = o1; }
+            m = U(); m.put("uBase", base); m.put("uAi", aiOut); m.put("uAmount", p.aiAmount); m.put("uSkinProtect", p.aiSkinProtect);
+            k.run("ai_blend.frag", o2, m);
+            res = o2;
+            if (temporal) res = temporalPass(res, (double) outW / srcW);
+            if (p.temporal) keepHistory(res);
+        } else if (p.ai && sr != null) {
             long ta = System.nanoTime();
             Tex lrIn = cur;
             if (lr != null) { resize(cur, lr, lrTmp); lrIn = lr; }

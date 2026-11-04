@@ -1,0 +1,22 @@
+HDR Studio 2.3.0-test
+package: com.mojahed.hdrstudio.test
+versionCode: 7
+versionName: 2.3.0-test
+signing cert SHA-256: 4cc961176a1b9b25fb1c8560b42bd58398e47af8980362e05120c490dd723dc4
+APK SHA-256: 8e5f9dd7211fd2ee6c6a92c903912475734e692d7fefeaba571552a25324e781
+APK size: 15895252
+native: lib/arm64-v8a/libhdrstudio_ncnn.so
+ELF LOAD alignment: 0x4000
+
+ncnn: 20250503 android-vulkan
+archive SHA-256: 4b54cd11094dae1371c59fb202dfd92d22962ffaef04317bdf99b12c09f44ed3
+NDK: 27.2.12479018
+CMake: 3.22.1
+The APK links the upstream android-vulkan archive of that tag. tools/ncnn/build_android.sh is the from-source path and was not required for this binary.
+
+Desktop, not Maleoon 935F:
+- tools/ncnn/check_layout.py PASS (weight SHA b21527dd…, pixelshuffle max abs 0)
+- JVM SUMMARY pass=122 fail=0 missing=0 exit=0, including mem_ncnn_counts_vulkan_workspace_not_glsl_tiles
+- no Vulkan timing and no image-quality number from this machine
+
+Phone still to run: «مقارنة GLSL و ncnn» on SCA-LX9. The default engine stays GLSL.

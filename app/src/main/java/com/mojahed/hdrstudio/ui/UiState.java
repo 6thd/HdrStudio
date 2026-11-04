@@ -25,4 +25,5 @@ final class UiState {
     volatile double measuredMsPerFrame;
     volatile String lastPreviewPath;
     volatile String trialReport;
+    volatile String aiCompareReport;
 }

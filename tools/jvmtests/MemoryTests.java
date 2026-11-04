@@ -80,6 +80,12 @@ public class MemoryTests {
         long v21Total = v21.total() - v21.aiTiles + MemoryBudget.aiTile(512);
         System.out.println(String.format(Locale.US, "INFO v2.1 tile rule at 3.2 GB free, 4K AI+temporal: tile 512 -> %d MB total (budget %d MB); new rule -> tile %d, %d MB",
                 mb(v21Total), mb(v21.budget), v21.tile, mb(v21.total())));
+        MemoryBudget.Plan glsl = MemoryBudget.plan(1920, 1080, false, 1920, 1080, false, false, true, 0.5f, 4 * GB, 8 * GB, false);
+        MemoryBudget.Plan ncnn = MemoryBudget.plan(1920, 1080, false, 1920, 1080, false, false, true, 0.5f, 4 * GB, 8 * GB, true);
+        check("mem_ncnn_counts_vulkan_workspace_not_glsl_tiles",
+                ncnn.ncnn && ncnn.aiTiles != glsl.aiTiles && ncnn.aiTiles >= MemoryBudget.ncnnWorkspace(ncnn.tile)
+                        && ncnn.aiFixed == MemoryBudget.AI_WEIGHTS * 2 && ncnn.cpu > glsl.cpu && ncnn.fits == (ncnn.total() <= ncnn.budget),
+                "glsl " + glsl.describe() + " | ncnn " + ncnn.describe());
         System.exit(fails == 0 ? 0 : 1);
     }
 }

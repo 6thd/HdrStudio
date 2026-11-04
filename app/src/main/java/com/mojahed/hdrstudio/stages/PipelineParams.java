@@ -14,6 +14,8 @@ public final class PipelineParams {
     public boolean ai;
     public float aiAmount = 0.7f, aiWorkScale = 1f, aiSkinProtect = 0.8f;   // 0.8: AI at 50% work scale made skin waxy in tests
     public int aiTile = 256;
+    /** Experimental. Off unless the user turns it on. Never implied by a failed GLSL path. */
+    public boolean aiNcnn;
     // final
     public float sharpen = 0.35f, sharpenSkinProtect = 0.5f;
     // HDR mapping
@@ -35,7 +37,7 @@ public final class PipelineParams {
         PipelineParams p = new PipelineParams();
         p.workDomain = workDomain; p.outMode = outMode; p.deband = deband; p.debandThreshold = debandThreshold; p.debandRadius = debandRadius;
         p.denoiseLuma = denoiseLuma; p.denoiseChroma = denoiseChroma; p.grainKeep = grainKeep; p.temporal = temporal; p.temporalStrength = temporalStrength;
-        p.ai = ai; p.aiAmount = aiAmount; p.aiWorkScale = aiWorkScale; p.aiSkinProtect = aiSkinProtect; p.aiTile = aiTile;
+        p.ai = ai; p.aiAmount = aiAmount; p.aiWorkScale = aiWorkScale; p.aiSkinProtect = aiSkinProtect; p.aiTile = aiTile; p.aiNcnn = aiNcnn;
         p.sharpen = sharpen; p.sharpenSkinProtect = sharpenSkinProtect; p.sdrGamma = sdrGamma; p.refWhite = refWhite; p.peak = peak;
         p.expand = expand; p.knee = knee; p.vibrance = vibrance; p.hdrSkinProtect = hdrSkinProtect; p.srcPeak = srcPeak; p.sdrPeakNits = sdrPeakNits;
         p.outW = outW; p.outH = outH;

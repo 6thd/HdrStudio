@@ -10,6 +10,7 @@ import android.os.PowerManager;
 import android.os.StatFs;
 import android.provider.MediaStore;
 
+import com.mojahed.hdrstudio.ai.NcnnSr;
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.core.DeviceCaps;
 import com.mojahed.hdrstudio.core.FrameRate;
@@ -119,9 +120,10 @@ public final class ExportJob implements Runnable {
         }
     }
 
-    private FramePipeline newPipeline(GlKit kit, SourceInfo s, PipelineParams p, SrEngine sr, final PowerManager pm, MemoryBudget.Plan mem) {
+    private FramePipeline newPipeline(GlKit kit, SourceInfo s, PipelineParams p, SrEngine sr, NcnnSr ncnn, final PowerManager pm, MemoryBudget.Plan mem) {
         long before = kit.allocatedBytes();
         FramePipeline fp = new FramePipeline(kit, s.width, s.height, p, sr);
+        fp.setNcnn(ncnn);
         fp.setTileGate(new FramePipeline.TileGate() {
             @Override public void between(int done, int total) { tileGate(pm); }
         });
@@ -212,6 +214,7 @@ public final class ExportJob implements Runnable {
         Egl egl = null;
         GlKit kit = null;
         SrEngine sr = null;
+        NcnnSr ncnn = null;
         FramePipeline pipe = null;
         FrameSource fs = null;
         VideoEncoder ve = null;
@@ -230,7 +233,7 @@ public final class ExportJob implements Runnable {
             PipelineParams p = req.params;
             boolean yuvPath = s.isHdr() || s.bitDepth > 8;
             MemoryBudget.Plan mem = MemoryBudget.plan(s.width, s.height, yuvPath, outW, outH, hdrOut,
-                    p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal);
+                    p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal, p.ai && p.aiNcnn);
             report.append(mem.describe()).append('\n');
             if (!mem.fits)
                 throw new IllegalStateException("فوق الميزانية المحافظة لهذه الإعدادات (نصف الذاكرة المتاحة، وثلث الذاكرة الكلية كحد). أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
@@ -239,7 +242,18 @@ public final class ExportJob implements Runnable {
             egl = new Egl(hdrOut);
             egl.makeCurrentOffscreen();
             kit = new GlKit(new ShaderLoader(ctx.getAssets()));
-            if (p.ai) {
+            if (p.ai && p.aiNcnn) {
+                stage("تحميل نموذج AI على ncnn/Vulkan");
+                ncnn = NcnnSr.open(ctx.getAssets(), true);
+                if (!ncnn.loaded || !ncnn.fullVulkan) {
+                    String why = ncnn.reason;
+                    ncnn.close();
+                    ncnn = null;
+                    throw new IllegalStateException("ncnn/Vulkan غير متاح: " + why + "\nاختر محرك GLSL.");
+                }
+                p.aiTile = mem.tile;
+                report.append(ncnn.summary()).append(" · بلاطة ").append(p.aiTile).append('\n');
+            } else if (p.ai) {
                 stage("تحميل نموذج AI وفحصه");
                 sr = new SrEngine(kit, ctx.getAssets());
                 if (!sr.selfTest(ctx.getAssets())) throw new IllegalStateException("AI " + sr.status);
@@ -256,7 +270,7 @@ public final class ExportJob implements Runnable {
             // ---------------- pass 1: exact MaxCLL / MaxFALL of the final pixels
             if (passes == 2) {
                 stage("المرحلة 1/2: قياس الإضاءة (MaxCLL/MaxFALL)");
-                pipe = newPipeline(kit, s, p, sr, pmFinal, mem);
+                pipe = newPipeline(kit, s, p, sr, ncnn, pmFinal, mem);
                 fs = new FrameSource(ctx, req.uri, s, yuvPath, start, end);
                 double cll = 0, fall = 0;
                 int n = 0;
@@ -312,7 +326,7 @@ public final class ExportJob implements Runnable {
             });
             ws = egl.createWindowSurface(ve.inputSurface, hdrOut);
             egl.makeCurrent(ws.surface);
-            pipe = newPipeline(kit, s, p, sr, pmFinal, mem);
+            pipe = newPipeline(kit, s, p, sr, ncnn, pmFinal, mem);
             fs = new FrameSource(ctx, req.uri, s, yuvPath, start, end);
             EncodeSelfTest.Result st = req.selfTest;
             Map<String, Object> u = new HashMap<>();
@@ -329,6 +343,10 @@ public final class ExportJob implements Runnable {
                 double dt = prevPts < 0 ? 1 / s.avgFps : (fs.ptsUs - prevPts) / 1e6;
                 prevPts = fs.ptsUs;
                 Tex out = pipe.process(in, dt);
+                if (n == 0 && p.ai) {
+                    report.append(String.format(Locale.US, "أول إطار AI: كلي %d ms · قراءة %d · شبكة %d · رفع %d · بلاطات %d\n",
+                            pipe.info.aiMs, pipe.info.aiReadMs, pipe.info.aiNetMs, pipe.info.aiUploadMs, pipe.info.tiles));
+                }
                 if (hdrOut && passes == 1 && n % 4 == 0) {
                     double[] l = pipe.measureLight();
                     cll = Math.max(cll, l[0]); fall = Math.max(fall, l[1]);
@@ -397,6 +415,7 @@ public final class ExportJob implements Runnable {
             if (ve != null) try { ve.release(); } catch (Throwable ignored) { }
             if (mux != null) mux.release();
             if (audio != null) audio.release();
+            if (ncnn != null) try { ncnn.close(); } catch (Throwable ignored) { }
             if (kit != null) try { kit.release(); } catch (Throwable ignored) { }
             if (egl != null) {
                 if (ws != null) try { egl.makeCurrentOffscreen(); egl.destroySurface(ws.surface); } catch (Throwable ignored) { }

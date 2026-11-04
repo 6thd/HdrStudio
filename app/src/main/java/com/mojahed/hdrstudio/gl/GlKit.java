@@ -100,6 +100,13 @@ public final class GlKit {
         return new Tex(a[0], w, h, 1, false);
     }
 
+    /** Replace every texel. data is tightly packed RGBA float, row 0 = GL bottom. */
+    public void upload(Tex t, FloatBuffer data) {
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, t.id);
+        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, t.w, t.h, GLES20.GL_RGBA, GLES20.GL_FLOAT, data);
+        GlException.check("upload " + t.w + "x" + t.h);
+    }
+
     /** RGBA8 texture (preview read-back). */
     public Tex tex8(int w, int h) {
         int[] a = new int[1];

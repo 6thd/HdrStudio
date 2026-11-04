@@ -21,6 +21,8 @@ public final class MemoryBudget {
         /** Conservative budget is the operating limit. hardLimit (85% of free RAM) is reported only, never a permission. */
         public boolean withinBudget, fits;
         public boolean analysis;    // preview: whole-frame statistics pass is included
+        /** True when aiTiles is the ncnn workspace estimate (not the GLSL tile textures). */
+        public boolean ncnn;
 
         public long total() { return input + pipeline + history + aiFixed + aiTiles + scratch + cpu + decoder + encoder; }
         public long gpu() { return input + pipeline + history + aiFixed + aiTiles + scratch; }
@@ -29,7 +31,7 @@ public final class MemoryBudget {
             return String.format(Locale.US, "ذاكرة متوقعة: %d MB (GPU %d: معالجة %d · تاريخ زمني %d · AI %d%s · مفكك/مرمّز ~%d تقديراً%s) · الميزانية المحافظة %d MB%s",
                     mb(total()), mb(gpu()), mb(input + pipeline), mb(history), mb(aiFixed + aiTiles), tile > 0 ? " بلاطة " + tile : "",
                     mb(decoder + encoder), cpu > 0 ? " · صور " + mb(cpu) : "",
-                    mb(budget), fits ? "" : " · فوق الميزانية المحافظة — لن يُشغَّل");
+                    mb(budget), (ncnn ? " · ncnn: مساحة العمل وتكرار الأوزان ونقل CPU تقدير" : "") + (fits ? "" : " · فوق الميزانية المحافظة — لن يُشغَّل"));
         }
     }
 
@@ -73,6 +75,19 @@ public final class MemoryBudget {
         return 2 * 16 * tex(f, f) + tex((t + 2L * SR_MARGIN) * 4, (t + 2L * SR_MARGIN) * 4);
     }
 
+    /**
+     * ncnn workspace for one tile, sized as FP32 even when the run is FP16, plus a labeled
+     * 64 MB driver slack. This is an estimate, not a measured allocation.
+     */
+    public static long ncnnWorkspace(int t) {
+        long f = t + 2L * SR_PAD;
+        long in = 4L * 3 * f * f;
+        long feat = 4L * 64 * f * f * 2;
+        long side = f * 4;
+        long out = 4L * 3 * side * side;
+        return in + feat + out + (64L << 20);
+    }
+
     public static long decoderEstimate(int w, int h, boolean tenBit) { return 14L * w * h * 3 / 2 * (tenBit ? 2 : 1); }
     public static long encoderEstimate(int w, int h, boolean tenBit) { return 10L * w * h * 3 / 2 * (tenBit ? 2 : 1); }
 
@@ -83,14 +98,35 @@ public final class MemoryBudget {
 
     public static Plan plan(int srcW, int srcH, boolean srcTenBit, int outW, int outH, boolean outTenBit,
                             boolean temporal, boolean ai, float aiWorkScale, long memAvail, long memTotal) {
+        return plan(srcW, srcH, srcTenBit, outW, outH, outTenBit, temporal, ai, aiWorkScale, memAvail, memTotal, false);
+    }
+
+    public static Plan plan(int srcW, int srcH, boolean srcTenBit, int outW, int outH, boolean outTenBit,
+                            boolean temporal, boolean ai, float aiWorkScale, long memAvail, long memTotal, boolean ncnn) {
         Plan p = new Plan();
         p.input = tex(srcW, srcH);
         p.pipeline = pipeline(srcW, srcH, outW, outH, temporal, ai, aiWorkScale);
         p.history = history(srcW, srcH, outW, outH, temporal, ai);
         p.decoder = decoderEstimate(srcW, srcH, srcTenBit);
         p.encoder = encoderEstimate(outW, outH, outTenBit);
-        chooseTile(p, ai, memAvail, memTotal);
+        if (ai && ncnn) {
+            p.cpu += transferBytes(srcW, srcH, aiWorkScale);
+            p.scratch += ncnnResampleTex(srcW, srcH, aiWorkScale, outW, outH);
+        }
+        chooseTile(p, ai, memAvail, memTotal, ncnn);
         return p;
+    }
+
+    /** RGBA32F download of the network input plus RGBA32F upload of the ×4 result. CPU, not GPU. */
+    public static long transferBytes(int srcW, int srcH, float aiWorkScale) {
+        int lw = Math.max(8, Math.round(srcW * aiWorkScale)), lh = Math.max(8, Math.round(srcH * aiWorkScale));
+        return 16L * lw * lh + 16L * lw * 4L * lh * 4L;
+    }
+
+    /** Extra GL texture when the ×4 result is not already the output size. 0 when it is. */
+    public static long ncnnResampleTex(int srcW, int srcH, float aiWorkScale, int outW, int outH) {
+        int lw = Math.max(8, Math.round(srcW * aiWorkScale)), lh = Math.max(8, Math.round(srcH * aiWorkScale));
+        return (lw * 4 != outW || lh * 4 != outH) ? tex(lw * 4L, lh * 4L) : 0;
     }
 
     /**
@@ -105,6 +141,15 @@ public final class MemoryBudget {
                                boolean wantAnalysis, boolean ai, float aiWorkScale,
                                int visW, int visH, boolean hdrDisplay,
                                long memAvail, long memTotal) {
+        return preview(srcW, srcH, srcTenBit, procW, procH, procOutW, procOutH, wantAnalysis, ai, aiWorkScale,
+                visW, visH, hdrDisplay, memAvail, memTotal, false);
+    }
+
+    public static Plan preview(int srcW, int srcH, boolean srcTenBit,
+                               int procW, int procH, int procOutW, int procOutH,
+                               boolean wantAnalysis, boolean ai, float aiWorkScale,
+                               int visW, int visH, boolean hdrDisplay,
+                               long memAvail, long memTotal, boolean ncnn) {
         Plan p = new Plan();
         p.input = tex(srcW, srcH);
         p.decoder = decoderEstimate(srcW, srcH, srcTenBit) * 4 / 14;   // a seek holds fewer buffers than a long export
@@ -115,7 +160,11 @@ public final class MemoryBudget {
         p.scratch = (cropped ? tex(procW, procH) + tex(visW, visH) : 0) + 4L * visW * visH   // process input crop + vis crop + RGBA8 readback
                 + (hdrDisplay ? tex(visW, visH) : 0);
         p.pipeline = processPipe;
-        chooseTile(p, ai, memAvail, memTotal);
+        if (ai && ncnn) {
+            p.cpu += transferBytes(procW, procH, aiWorkScale);
+            p.scratch += ncnnResampleTex(procW, procH, aiWorkScale, procOutW, procOutH);
+        }
+        chooseTile(p, ai, memAvail, memTotal, ncnn);
         p.analysis = false;
         if (wantAnalysis && analysisPipe > 0) {
             long saved = p.pipeline;
@@ -129,14 +178,18 @@ public final class MemoryBudget {
     }
 
     /** Conservative budget is the operating limit. 85% of free RAM is recorded, not a second gate. */
-    static void chooseTile(Plan p, boolean ai, long memAvail, long memTotal) {
+    static void chooseTile(Plan p, boolean ai, long memAvail, long memTotal, boolean ncnn) {
         p.budget = budget(memAvail, memTotal);
         p.hardLimit = memAvail > 0 ? memAvail * 85 / 100 : 0;
+        p.ncnn = ai && ncnn;
         if (ai) {
-            p.aiFixed = AI_WEIGHTS;
+            p.aiFixed = ncnn ? AI_WEIGHTS * 2 : AI_WEIGHTS;
             p.tile = TILES[TILES.length - 1];
-            for (int t : TILES) if (p.total() - p.aiTiles + aiTile(t) <= p.budget) { p.tile = t; break; }
-            p.aiTiles = aiTile(p.tile);
+            for (int t : TILES) {
+                long tile = ncnn ? ncnnWorkspace(t) : aiTile(t);
+                if (p.total() - p.aiTiles + tile <= p.budget) { p.tile = t; break; }
+            }
+            p.aiTiles = ncnn ? ncnnWorkspace(p.tile) : aiTile(p.tile);
         }
         p.withinBudget = p.total() <= p.budget;
         p.fits = p.withinBudget;

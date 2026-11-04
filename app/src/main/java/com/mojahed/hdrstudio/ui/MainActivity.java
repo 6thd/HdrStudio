@@ -62,12 +62,12 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private final UiState st = UiState.get();
     private SharedPreferences prefs;
 
-    private TextView srcText, devText, selfTestText, trialText, aiText, statusText, resultText, etaText, previewNote, storageText;
+    private TextView srcText, devText, selfTestText, trialText, aiText, compareText, statusText, resultText, etaText, previewNote, storageText;
     private RadioGroup presetGroup, resGroup, aiScaleGroup, gammaGroup;
-    private Switch aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
+    private Switch aiSwitch, ncnnSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
     private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
     private TextView bitrateLabel, posLabel;
-    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, previewBtn, clipBtn, openBtn;
+    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, previewBtn, clipBtn, openBtn;
     private ProgressBar progress;
     private CompareView compare;
     private VideoView video;
@@ -143,7 +143,8 @@ public final class MainActivity extends Activity implements JobManager.Listener 
             @Override public void onClick(View v) {
                 String body = (devText.getText() == null ? "" : devText.getText().toString()) + "\n\n"
                         + (selfTestText.getText() == null ? "" : selfTestText.getText().toString()) + "\n\n"
-                        + (trialText.getText() == null ? "" : trialText.getText().toString());
+                        + (trialText.getText() == null ? "" : trialText.getText().toString()) + "\n\n"
+                        + (compareText == null || compareText.getText() == null ? "" : compareText.getText().toString());
                 ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 cm.setPrimaryClip(ClipData.newPlainText("HDR Studio diagnostic", body));
                 if (statusText != null) statusText.setText("نُسخ تقرير التشخيص إلى الحافظة.");
@@ -169,6 +170,12 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         aiTestBtn = button("فحص نموذج AI على GPU", false);
         aiTestBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runAiTest(); } });
         c4.addView(aiTestBtn, lp(4));
+        ncnnSwitch = sw(c4, "محرك AI التجريبي: ncnn/Vulkan (ليس الافتراضي)", prefs.getBoolean("ncnn", false));
+        compareBtn = button("مقارنة GLSL و ncnn", false);
+        compareBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runEngineCompare(); } });
+        c4.addView(compareBtn, lp(4));
+        compareText = text("مقارنة المحركين لم تُشغَّل. لا تحتاج فيديو ولا نجاح تصدير HDR.", 12, dim);
+        c4.addView(compareText, lp(4));
         sAi = seek(c4, "مزج نتيجة AI مع الأصل", 0, 100, prefs.getInt("aiAmt", 70));
         aiScaleGroup = radios(c4, new String[]{"AI أعلى جودة (بدقة المصدر)", "AI أسرع (بنصف الدقة – يفقد قواماً دقيقاً)"}, prefs.getInt("aiQuality", 0));
         sDenoise = seek(c4, "إزالة الضوضاء (الإضاءة)", 0, 100, prefs.getInt("dn", 30));
@@ -231,7 +238,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         CompoundButton.OnCheckedChangeListener occ = new CompoundButton.OnCheckedChangeListener() {
             @Override public void onCheckedChanged(CompoundButton b, boolean c) { saveAndRefresh(); }
         };
-        for (Switch s : new Switch[]{aiSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch}) s.setOnCheckedChangeListener(occ);
+        for (Switch s : new Switch[]{aiSwitch, ncnnSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch}) s.setOnCheckedChangeListener(occ);
         RadioGroup.OnCheckedChangeListener rc = new RadioGroup.OnCheckedChangeListener() {
             @Override public void onCheckedChanged(RadioGroup g, int id) { saveAndRefresh(); }
         };
@@ -264,6 +271,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private PipelineParams params() {
         PipelineParams p = new PipelineParams();
         p.ai = aiSwitch.isChecked();
+        p.aiNcnn = p.ai && ncnnSwitch.isChecked();
         p.aiAmount = sAi.getProgress() / 100f;
         p.aiWorkScale = checked(aiScaleGroup) == 0 ? 1f : 0.5f;     // never chosen automatically
         if (st.src != null && p.aiWorkScale == 0.5f && Math.min(st.src.width, st.src.height) <= 720) p.aiWorkScale = 1f;
@@ -290,7 +298,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
 
     private void saveAndRefresh() {
         prefs.edit().putInt("preset", checked(presetGroup)).putInt("res", checked(resGroup)).putInt("aiQuality", checked(aiScaleGroup))
-                .putInt("gamma", checked(gammaGroup)).putBoolean("ai", aiSwitch.isChecked()).putBoolean("tmp", temporalSwitch.isChecked())
+                .putInt("gamma", checked(gammaGroup)).putBoolean("ai", aiSwitch.isChecked()).putBoolean("ncnn", ncnnSwitch.isChecked()).putBoolean("tmp", temporalSwitch.isChecked())
                 .putBoolean("deb", debandSwitch.isChecked()).putBoolean("measure", measureSwitch.isChecked()).putBoolean("audio", audioSwitch.isChecked()).putBoolean("crop", cropSwitch.isChecked())
                 .putInt("bitrate", sBitrate.getProgress()).putInt("aiAmt", sAi.getProgress()).putInt("dn", sDenoise.getProgress()).putInt("dnc", sChroma.getProgress())
                 .putInt("tmps", sTemporal.getProgress()).putInt("sh", sSharpen.getProgress()).putInt("exp", sExpand.getProgress()).putInt("peak", sPeak.getProgress())
@@ -336,6 +344,9 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         boolean hdrSrc = st.src != null && st.src.isHdr();
         aiSwitch.setEnabled(!hdrSrc);
         if (hdrSrc && aiSwitch.isChecked()) aiSwitch.setChecked(false);
+        ncnnSwitch.setEnabled(!hdrSrc && aiSwitch.isChecked());
+        if (hdrSrc && ncnnSwitch.isChecked()) ncnnSwitch.setChecked(false);
+        if (st.aiCompareReport != null) compareText.setText(st.aiCompareReport);
         String ai = (st.aiStatus == null ? "حالة النموذج: لم يُفحص (يُفحص تلقائياً عند التصدير)" : "حالة النموذج: " + st.aiStatus)
                 + "\nأعلى جودة: الأفضل في الاختبارات (يحافظ على قوام الشعر والبشرة). الأسرع: نحو 4 أضعاف السرعة مع فقدان قوام دقيق."
                 + (st.src != null && Math.min(st.src.width, st.src.height) > 1080 ? "\nمصدر 4K بأعلى جودة مكلف جداً: شغّل «معاينة مقطع» أولاً لقياس الزمن الفعلي، أو استخدم التحسين التقليدي (أطفئ AI)." : "");
@@ -413,6 +424,20 @@ public final class MainActivity extends Activity implements JobManager.Listener 
                 ui(new Runnable() { @Override public void run() { trialBtn.setEnabled(true); refreshAll(); } });
             }
         });
+    }
+
+    private void runEngineCompare() {
+        compareText.setText("جارٍ مقارنة GLSL و ncnn على أنماط مضمّنة. لا يُستخدم فيديو ولا يُفتح التصدير.");
+        compareBtn.setEnabled(false);
+        bg(new Runnable() { @Override public void run() {
+            final String report = com.mojahed.hdrstudio.ai.AiEngineCompare.run(getApplicationContext(), new com.mojahed.hdrstudio.ai.AiEngineCompare.Progress() {
+                @Override public void onProgress(final String line) {
+                    ui(new Runnable() { @Override public void run() { compareText.setText("جارٍ: " + line); } });
+                }
+            });
+            st.aiCompareReport = report;
+            ui(new Runnable() { @Override public void run() { compareBtn.setEnabled(true); compareText.setText(report); } });
+        }});
     }
 
     private void runAiTest() {

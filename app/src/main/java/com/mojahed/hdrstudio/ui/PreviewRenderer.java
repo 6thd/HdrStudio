@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
 
+import com.mojahed.hdrstudio.ai.NcnnSr;
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.core.ColorMath;
 import com.mojahed.hdrstudio.core.MemoryBudget;
@@ -56,6 +57,7 @@ public final class PreviewRenderer {
         FrameSource fs = null;
         FramePipeline pipe = null;
         SrEngine sr = null;
+        NcnnSr ncnn = null;
         try {
             PipelineParams p = base.copy();
             p.applySource(src, hdrOut);
@@ -70,7 +72,7 @@ public final class PreviewRenderer {
             int visW = full ? outW : g.visW, visH = full ? outH : g.visH;
             MemoryBudget.Plan mem = MemoryBudget.preview(src.width, src.height, ten,
                     procW, procH, procOutW, procOutH, !full, p.ai, p.aiWorkScale,
-                    visW, visH, hdrOut, memAvail, memTotal);
+                    visW, visH, hdrOut, memAvail, memTotal, p.ai && p.aiNcnn);
             r.mem = mem;
             if (!mem.fits)
                 throw new IllegalStateException("المعاينة فوق الميزانية المحافظة.\n" + mem.describe());
@@ -79,7 +81,11 @@ public final class PreviewRenderer {
             egl = new Egl(false);
             egl.makeCurrentOffscreen();
             k = new GlKit(new ShaderLoader(ctx.getAssets()));
-            if (p.ai) {
+            if (p.ai && p.aiNcnn) {
+                ncnn = NcnnSr.open(ctx.getAssets(), true);
+                if (!ncnn.loaded || !ncnn.fullVulkan)
+                    throw new IllegalStateException("ncnn/Vulkan غير متاح: " + ncnn.reason + "\nاختر محرك GLSL.");
+            } else if (p.ai) {
                 sr = new SrEngine(k, ctx.getAssets());
                 if (!sr.selfTest(ctx.getAssets())) throw new IllegalStateException("AI " + sr.status);
             }
@@ -92,6 +98,7 @@ public final class PreviewRenderer {
                 r.before = toBitmap(k, in, p.workDomain, p.workDomain == 1 ? p.srcPeak : 0);
                 long t0 = System.nanoTime();
                 pipe = new FramePipeline(k, src.width, src.height, p, sr);
+                pipe.setNcnn(ncnn);
                 Tex out = pipe.process(in, 1 / 30.0);
                 k.read(out, 0, 0, 1, 1);
                 r.ms = (System.nanoTime() - t0) / 1000000;
@@ -119,6 +126,7 @@ public final class PreviewRenderer {
                 PipelineParams cp = p.copy();
                 cp.outW = g.outW; cp.outH = g.outH;
                 pipe = new FramePipeline(k, g.w, g.h, cp, sr);
+                pipe.setNcnn(ncnn);
                 if (rg != null) pipe.setRegion(rg);
                 Tex out = pipe.process(ct, 1 / 30.0);
                 k.read(out, 0, 0, 1, 1);
@@ -139,6 +147,7 @@ public final class PreviewRenderer {
         } finally {
             if (fs != null) fs.release();
             if (pipe != null) pipe.release();
+            if (ncnn != null) ncnn.close();
             if (sr != null) sr.release();
             if (k != null) k.release();
             if (egl != null) egl.release();
