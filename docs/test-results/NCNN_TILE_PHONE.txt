@@ -30,3 +30,15 @@ Accepted, per mode, against the unchanged limits (maxAbs <= 0.02, PSNR >= 40 dB 
 Weights, tile geometry and limits stay as they are.
 The timing did not run: OutOfMemoryError allocating 132,710,419 bytes (the x4 RGBA frame for the GL upload),
 Java growth limit 536,870,912. Fixed in 2.3.5 (per-tile upload from native buffers, Java heap as its own limit).
+
+----------------------------------------------------------------
+2.3.5-test on the phone (2026-11-04, report in NCNN_PHONE_2.3.5.txt, Actions run #5, commit dc618d1)
+- Memory fix confirmed: Java limit 512 MB, used 20 MB before timing, 25 MB after; the ncnn plan needs 16 MB of
+  Java (2.3.4 failed allocating 132,710,419 bytes). System RAM available 3.5 of 11.6 GB; common tile T=512.
+- The matching checks ran through the new native core path (nativeForwardCore + per-tile sink): CPU FP32,
+  Vulkan FP32 and FP16-storage/FP32-arithmetic all pass with the same numbers as 2.3.4 (tiled = direct
+  0.000000 on 16x12 for both FP32 modes). This verifies the C++ crop/shuffle indexing on the device.
+- Timing did not run: thermal status was >= MODERATE when it was reached (after ~25 s of 80-tile checks);
+  the report did not print the level. 2.3.6 waits up to 300 s for status < MODERATE before each engine
+  pair, prints status names and thermal headroom, and adds «قياس الأداء فقط» for this build's accepted modes.
+No speed-up is claimed; GLSL stays the default.

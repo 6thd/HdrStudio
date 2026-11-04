@@ -67,7 +67,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private Switch aiSwitch, ncnnSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
     private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
     private TextView bitrateLabel, posLabel;
-    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, previewBtn, clipBtn, openBtn;
+    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, perfBtn, previewBtn, clipBtn, openBtn;
     private ProgressBar progress;
     private CompareView compare;
     private VideoView video;
@@ -174,6 +174,9 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         compareBtn = button("فحص بلاطات ncnn ثم المقارنة", false);
         compareBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runEngineCompare(); } });
         c4.addView(compareBtn, lp(4));
+        perfBtn = button("قياس الأداء فقط (بعد فحص هذه النسخة)", false);
+        perfBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runPerfOnly(); } });
+        c4.addView(perfBtn, lp(4));
         compareText = text("مقارنة المحركين لم تُشغَّل. لا تحتاج فيديو ولا نجاح تصدير HDR.", 12, dim);
         c4.addView(compareText, lp(4));
         sAi = seek(c4, "مزج نتيجة AI مع الأصل", 0, 100, prefs.getInt("aiAmt", 70));
@@ -429,6 +432,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private void runEngineCompare() {
         compareText.setText("جارٍ فحص المسار المقسّم لـ ncnn لكل وضع (CPU FP32 وVulkan FP32 وVulkan تخزين FP16 مع حساب FP32) ثم قياس أداء الأوضاع المقبولة. لا يُستخدم فيديو ولا يُفتح التصدير.");
         compareBtn.setEnabled(false);
+        perfBtn.setEnabled(false);
         bg(new Runnable() { @Override public void run() {
             final String report = com.mojahed.hdrstudio.ai.AiEngineCompare.run(getApplicationContext(), new com.mojahed.hdrstudio.ai.AiEngineCompare.Progress() {
                 @Override public void onProgress(final String line) {
@@ -436,7 +440,22 @@ public final class MainActivity extends Activity implements JobManager.Listener 
                 }
             });
             st.aiCompareReport = report;
-            ui(new Runnable() { @Override public void run() { compareBtn.setEnabled(true); compareText.setText(report); } });
+            ui(new Runnable() { @Override public void run() { compareBtn.setEnabled(true); perfBtn.setEnabled(true); compareText.setText(report); } });
+        }});
+    }
+
+    private void runPerfOnly() {
+        compareText.setText("جارٍ قياس الأداء للأوضاع المقبولة في فحص هذه النسخة، بعد انتظار تبريد الهاتف إن لزم. لا يُستخدم فيديو ولا يُفتح التصدير.");
+        compareBtn.setEnabled(false);
+        perfBtn.setEnabled(false);
+        bg(new Runnable() { @Override public void run() {
+            final String report = com.mojahed.hdrstudio.ai.AiEngineCompare.runPerfOnly(getApplicationContext(), new com.mojahed.hdrstudio.ai.AiEngineCompare.Progress() {
+                @Override public void onProgress(final String line) {
+                    ui(new Runnable() { @Override public void run() { compareText.setText("جارٍ: " + line); } });
+                }
+            });
+            st.aiCompareReport = report;
+            ui(new Runnable() { @Override public void run() { compareBtn.setEnabled(true); perfBtn.setEnabled(true); compareText.setText(report); } });
         }});
     }
 

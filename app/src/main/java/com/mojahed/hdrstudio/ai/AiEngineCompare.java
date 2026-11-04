@@ -77,6 +77,7 @@ public final class AiEngineCompare {
             r.append("توقف الفحص:\n").append(chain(t)).append(MemoryBudget.JavaHeap.current().describe()).append('\n');
         }
         r.append('\n');
+        saveAccepted(ctx, accepted);
         if (accepted.isEmpty()) {
             r.append("لا وضع Vulkan مقبول. قياس الأداء لم يُشغَّل.\n");
         } else {
@@ -88,6 +89,108 @@ public final class AiEngineCompare {
         r.append("الافتراضي يبقى GLSL. التصدير التجريبي عبر ncnn يستخدم ").append(NcnnSr.Opts.exportMode().label())
                 .append(". هذا الزر لا يغيّر أي إعداد. الأرقام من هذا التشغيل على هذا الجهاز فقط.\n");
         return r.toString();
+    }
+
+    /** Longest wait for the phone to cool before one engine pair is timed. */
+    static final int COOL_WAIT_S = 300, COOL_POLL_S = 5;
+    private static final String PREFS = "ncnn_compare";
+
+    /**
+     * Timing only, for the modes the full check of THIS build accepted (stored by run()). Lets the timing
+     * start on a cool phone instead of right after the heavy matching checks. Nothing is re-accepted here.
+     */
+    public static String runPerfOnly(Context ctx, Progress progress) {
+        StringBuilder r = new StringBuilder();
+        r.append("قياس الأداء فقط — ليس نتيجة تصدير HDR\n");
+        r.append("الجهاز: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
+                .append(" API ").append(android.os.Build.VERSION.SDK_INT).append('\n');
+        android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        long build = versionCode(ctx), saved = sp.getLong("versionCode", -1);
+        String keys = sp.getString("accepted", "");
+        if (saved != build) {
+            r.append("لا يوجد قبول محفوظ لهذه النسخة (").append(build).append("). شغّل «فحص بلاطات ncnn ثم المقارنة» أولاً.\n");
+            return r.toString();
+        }
+        java.util.List<NcnnSr.Opts> modes = new java.util.ArrayList<>();
+        for (String k : keys.split(",")) { NcnnSr.Opts o = optsOf(k); if (o != null) modes.add(o); }
+        r.append("الأوضاع المقبولة في فحص هذه النسخة (").append(new java.util.Date(sp.getLong("time", 0))).append("):");
+        for (NcnnSr.Opts o : modes) r.append(' ').append(o.label()).append(';');
+        r.append('\n');
+        if (modes.isEmpty()) { r.append("لا وضع Vulkan مقبول. لا قياس.\n"); return r.toString(); }
+        perf(ctx, r, (PowerManager) ctx.getSystemService(Context.POWER_SERVICE), modes, progress);
+        r.append("الافتراضي يبقى GLSL. هذا الزر لا يغيّر أي إعداد. الأرقام من هذا التشغيل على هذا الجهاز فقط.\n");
+        return r.toString();
+    }
+
+    private static void saveAccepted(Context ctx, java.util.List<NcnnSr.Opts> accepted) {
+        StringBuilder k = new StringBuilder();
+        for (NcnnSr.Opts o : accepted) { if (k.length() > 0) k.append(','); k.append(keyOf(o)); }
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putLong("versionCode", versionCode(ctx)).putString("accepted", k.toString())
+                .putLong("time", System.currentTimeMillis()).apply();
+    }
+
+    private static String keyOf(NcnnSr.Opts o) {
+        return o.fp16Storage && !o.fp16Arith ? "vulkanFp16Storage" : !o.fp16Storage && !o.fp16Arith ? "vulkanFp32" : "other";
+    }
+
+    private static NcnnSr.Opts optsOf(String k) {
+        if ("vulkanFp32".equals(k)) return NcnnSr.Opts.vulkanFp32();
+        if ("vulkanFp16Storage".equals(k)) return NcnnSr.Opts.vulkanFp16Storage();
+        return null;
+    }
+
+    private static long versionCode(Context ctx) {
+        try { return ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).getLongVersionCode(); }
+        catch (Exception e) { return -2; }
+    }
+
+    static String thermalName(int s) {
+        switch (s) {
+            case PowerManager.THERMAL_STATUS_NONE: return "NONE(0)";
+            case PowerManager.THERMAL_STATUS_LIGHT: return "LIGHT(1)";
+            case PowerManager.THERMAL_STATUS_MODERATE: return "MODERATE(2)";
+            case PowerManager.THERMAL_STATUS_SEVERE: return "SEVERE(3)";
+            case PowerManager.THERMAL_STATUS_CRITICAL: return "CRITICAL(4)";
+            case PowerManager.THERMAL_STATUS_EMERGENCY: return "EMERGENCY(5)";
+            case PowerManager.THERMAL_STATUS_SHUTDOWN: return "SHUTDOWN(6)";
+            default: return "?(" + s + ")";
+        }
+    }
+
+    /** Status name plus Android's thermal headroom (1.0 = throttling starts; API 30+, NaN if the device does not report it). */
+    static String thermal(PowerManager pm) {
+        if (pm == null) return "غير متاح";
+        String h = "";
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            float v = pm.getThermalHeadroom(0);
+            h = Float.isNaN(v) ? " · headroom غير مُبلغ" : String.format(Locale.US, " · headroom %.2f", v);
+        }
+        return thermalName(pm.getCurrentThermalStatus()) + h;
+    }
+
+    /**
+     * Waits (at most COOL_WAIT_S) until the thermal status is below MODERATE, so throttling does not bias
+     * the timing. Reports the status at start and end and the time waited. Returns false if still hot.
+     */
+    private static boolean waitCool(PowerManager pm, StringBuilder r, Progress progress, String label) {
+        if (pm == null) return true;
+        String start = thermal(pm);
+        long t0 = System.currentTimeMillis();
+        while (thermalHot(pm)) {
+            long waited = (System.currentTimeMillis() - t0) / 1000;
+            if (waited >= COOL_WAIT_S) {
+                r.append(String.format(Locale.US, "%s: لم يُقس. الحرارة عند البدء %s وبعد انتظار %d ث ما زالت %s (المطلوب أقل من MODERATE). أعد المحاولة بزر «قياس الأداء فقط» بعد أن يبرد الهاتف.\n",
+                        label, start, waited, thermal(pm)));
+                return false;
+            }
+            step(progress, String.format(Locale.US, "انتظار تبريد الهاتف قبل %s: %s · %d/%d ث", label, thermal(pm), waited, COOL_WAIT_S));
+            try { Thread.sleep(COOL_POLL_S * 1000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+        }
+        long waited = (System.currentTimeMillis() - t0) / 1000;
+        r.append(String.format(Locale.US, "%s: الحرارة عند البدء %s%s · عند القياس %s\n", label, start,
+                waited > 0 ? String.format(Locale.US, " · انتظار تبريد %d ث", waited) : "", thermal(pm)));
+        return true;
     }
 
     static final int WARMUP = 1, REPS = 5;
@@ -115,7 +218,7 @@ public final class AiEngineCompare {
             int inW = 960, inH = 540;
             long[] ram = ram(ctx);
             MemoryBudget.JavaHeap jh = MemoryBudget.JavaHeap.current();
-            r.append("قبل القياس: ").append(jh.describe()).append(memLine(ram)).append('\n');
+            r.append("قبل القياس: ").append(jh.describe()).append(memLine(ram)).append(" · الحرارة ").append(thermal(pm)).append('\n');
             MemoryBudget.Plan gPlan = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, ram[0], ram[1], false);
             MemoryBudget.Plan nPlan = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, ram[0], ram[1], true, jh);
             int tile = Math.min(gPlan.tile, nPlan.tile);
@@ -138,7 +241,7 @@ public final class AiEngineCompare {
             }
             float[] img = pattern(5, inW, inH);
             for (NcnnSr.Opts o : modes) {
-                if (thermalHot(pm)) { r.append(o.label()).append(": لم يُقس، الحرارة ليست منخفضة.\n"); continue; }
+                if (!waitCool(pm, r, progress, o.label())) continue;
                 step(progress, "زمن " + o.label());
                 NcnnSr net = NcnnSr.open(ctx.getAssets(), o);
                 try {
@@ -195,7 +298,7 @@ public final class AiEngineCompare {
     }
 
     private static String timeBoth(GlKit kit, SrEngine glsl, NcnnSr ncnn, float[] rgb, int w, int h, int tile, PowerManager pm) {
-        int t0Thermal = pm == null ? -1 : pm.getCurrentThermalStatus();
+        String t0Thermal = thermal(pm);
         Tex in, outG, outN;
         {
             float[] rgba = new float[w * h * 4];
@@ -223,9 +326,9 @@ public final class AiEngineCompare {
         } finally {
             kit.delete(in); kit.delete(outG); kit.delete(outN);
         }
-        int t1Thermal = pm == null ? -1 : pm.getCurrentThermalStatus();
+        String t1Thermal = thermal(pm);
         StringBuilder s = new StringBuilder();
-        s.append(String.format(Locale.US, "%s · حرارة قبل %d بعد %d%s\n", ncnn.opts.label(), t0Thermal, t1Thermal, fullVk ? "" : " · ليس Vulkan بالكامل"));
+        s.append(String.format(Locale.US, "%s · حرارة قبل %s · بعد %s%s\n", ncnn.opts.label(), t0Thermal, t1Thermal, fullVk ? "" : " · ليس Vulkan بالكامل"));
         s.append("  الإعدادات الفعلية: ").append(ncnn.options).append('\n');
         s.append(String.format(Locale.US, "  GLSL نسيج→نسيج: وسيط %s · أدنى %s · أعلى %s ms\n", ms(med(g)), ms(min(g)), ms(max(g))));
         s.append(String.format(Locale.US, "  ncnn نسيج→نسيج: وسيط %s · أدنى %s · أعلى %s ms\n", ms(med(n[0])), ms(min(n[0])), ms(max(n[0]))));
