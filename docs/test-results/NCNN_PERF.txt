@@ -1,0 +1,38 @@
+ncnn vs GLSL timing on the phone — HUAWEI SCA-LX9 (Maleoon 935F), API 36
+Build: 2.3.6-test (versionCode 13, commit 2523855, Actions run #6). Run #6's log was not retrievable from
+GitHub (the run page stayed "Queued" after its artifact was uploaded); the app confirms it is build 13 by the
+stored acceptance of 2026-11-04 19:47 +03:00. Report: NCNN_PHONE_2.3.6_perf.txt («قياس الأداء فقط»).
+
+Setup, identical for both engines: source 1920x1080 at workScale 0.5 -> network input 960x540, output 3840x2160
+(x4); common tile T=512 (4 tiles; ncnn window <= 584x540); texture -> texture; 1 warm-up + 5 runs interleaved
+GLSL/ncnn per mode; median reported. Memory: Java used 8-39 MB of 512; native heap <= 40 MB; ncnn native
+buffers 67 MB; no out-of-memory.
+
+Median time per frame
+| mode (pair)                          | thermal before -> after | GLSL     | ncnn     | ncnn/GLSL |
+| Vulkan FP32 (pair 1)                 | NONE -> LIGHT           | 12.75 s  | 14.26 s  | 1.12 (ncnn 11.8% slower) |
+| Vulkan FP16 storage + FP32 arith (2) | LIGHT -> LIGHT          | 13.65 s  |  8.41 s  | 0.62 (ncnn 38.4% less time, 1.62x throughput) |
+GLSL itself was 7.0% slower in pair 2 than in pair 1 (warmer phone); each pair is interleaved, so the ratio
+inside a pair is the fair comparison. Thermal headroom is not reported by this device.
+
+ncnn stages (median): GL read 15-30 ms · window gather 5-7 ms · CPU pack 17-19 ms · extract (GPU compute +
+transfer + sync) 13.41 s FP32 / 7.53 s FP16-storage (94% / 90% of the frame) · PixelShuffle + residual of the
+cores on one CPU thread 0.67 s · per-tile GL upload 0.12-0.14 s.
+
+Placement check (256x256 at (1920,1904), crossing the x=2048 and y=2048 tile boundaries), ncnn vs GLSL:
+FP32 maxAbs 0.0010 / 76.2 dB; FP16 storage 0.0034 / 69.8 dB. The per-tile uploads land where they should.
+
+Caveats
+- Maximums are far above the medians: GLSL 985.6 s and 60.9 s, ncnn FP32 273.1 s for single runs. At least one
+  run per engine was interrupted (most likely the screen turning off or the app leaving the foreground while
+  the phone was left to cool). Minimums are within 3% of the medians, so the medians are representative, but
+  the run should be repeated with the screen kept on.
+- One pair per mode, and the FP16-storage pair always ran second (warmer). Repeat with the order swapped.
+- This is the network on one frame. A full export adds decode, the rest of the pipeline and encode.
+
+What it means in practice (from the medians, AI stage only): 300 frames (10 s at 30 fps) take about 64 min with
+GLSL, 71 min with ncnn FP32, 42 min with ncnn FP16 storage. Neither is near real time on this phone.
+
+Status: no default changes. GLSL stays the default. Experimental ncnn export still uses Vulkan FP32, which
+measured slower than GLSL here; FP16 storage + FP32 arithmetic passed the unchanged accuracy limits and measured
+faster, and is the candidate for the experimental ncnn mode after a confirming repeat.

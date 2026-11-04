@@ -1,0 +1,30 @@
+قياس الأداء فقط — ليس نتيجة تصدير HDR
+الجهاز: HUAWEI SCA-LX9 API 36
+الأوضاع المقبولة في فحص هذه النسخة (Wed Nov 04 19:47:40 GMT+03:00 2026): Vulkan FP32; Vulkan FP16 storage + FP32 arithmetic;
+
+الأداء — GLSL: جاهز (فحص النموذج على GPU: أقصى خطأ 0.0022)
+قبل القياس: Java: الحد 512 MB · المستخدم 8 MB · المتاح 504 MB · native heap 21 MB · النظام متاح 3681 من 11597 MB · الحرارة NONE(0) · headroom غير مُبلغ
+المصدر 1920x1080 بنصف دقة العمل (workScale 0.5): دخل الشبكة 960x540، الخرج ×4 = 3840x2160. البلاطة المشتركة T=512 (GLSL يسمح بـ 512 وncnn بـ 512)، 4 بلاطات، نافذة ncnn ≤584x540. إحماء 1 ثم 5 تكرارات متناوبة.
+ميزانية GLSL: ذاكرة متوقعة: 628 MB (GPU 468: معالجة 349 · تاريخ زمني 0 · AI 118 بلاطة 512 · مفكك/مرمّز ~160 تقديراً) · الميزانية المحافظة 1841 MB
+ميزانية ncnn: ذاكرة متوقعة: 1000 MB (GPU 824: معالجة 349 · تاريخ زمني 0 · AI 474 بلاطة 512 · مفكك/مرمّز ~160 تقديراً · صور 16) · الميزانية المحافظة 1841 MB · ncnn: GPU/مساحة عمل 279 + native 190 MB تقدير · Java 16 من المتاح 504 MB
+Vulkan FP32: الحرارة عند البدء NONE(0) · headroom غير مُبلغ · عند القياس NONE(0) · headroom غير مُبلغ
+قبل Vulkan FP32: Java: الحد 512 MB · المستخدم 19 MB · المتاح 493 MB · native heap 40 MB · النظام متاح 3607 من 11597 MB · مخازن ncnn الأصلية 67 MB
+Vulkan FP32 · حرارة قبل NONE(0) · headroom غير مُبلغ · بعد LIGHT(1) · headroom غير مُبلغ
+  الإعدادات الفعلية: requested: vulkan=1 fp16_storage=0 fp16_arith=0 fp16_packed=0 fp16_uniform=0 bf16_storage=0 int8=0 image_storage=0 packing=0 winograd=1 sgemm=1 threads=1 | effective: vulkan=1 fp16_storage=0 fp16_arith=0 fp16_packed=0 fp16_uniform=0 bf16_storage=0 int8=0 image_storage=0 packing=0 winograd=1 sgemm=1 threads=1 | device fp16_storage=1 fp16_arith=1 fp16_uniform=1 bug_implicit_fp16_arith=0
+  GLSL نسيج→نسيج: وسيط 12753 · أدنى 12348 · أعلى 985602 ms
+  ncnn نسيج→نسيج: وسيط 14257 · أدنى 14099 · أعلى 273102 ms
+    وسيط المراحل: قراءة GL 15 · المقسّم 14238 (جمع النوافذ 7 · تعبئة CPU 17 · extract شاملاً النقل والمزامنة 13407 · PixelShuffle+المتبقي للقلب 667 · رفع القلوب إلى GL 120) ms
+  تحقق موضع الرفع: منطقة 256×256 عند (1920,1904) تعبر حد بلاطة، ncnn مقابل GLSL: maxAbs 0.0010 · PSNR 76.2 dB
+  النسبة ncnn/GLSL (وسيط): 1.12× — GLSL أقصر زمناً في هذا القياس
+Vulkan FP16 storage + FP32 arithmetic: الحرارة عند البدء LIGHT(1) · headroom غير مُبلغ · عند القياس LIGHT(1) · headroom غير مُبلغ
+قبل Vulkan FP16 storage + FP32 arithmetic: Java: الحد 512 MB · المستخدم 39 MB · المتاح 473 MB · native heap 39 MB · النظام متاح 2690 من 11597 MB · مخازن ncnn الأصلية 67 MB
+Vulkan FP16 storage + FP32 arithmetic · حرارة قبل LIGHT(1) · headroom غير مُبلغ · بعد LIGHT(1) · headroom غير مُبلغ
+  الإعدادات الفعلية: requested: vulkan=1 fp16_storage=1 fp16_arith=0 fp16_packed=0 fp16_uniform=0 bf16_storage=0 int8=0 image_storage=0 packing=0 winograd=1 sgemm=1 threads=1 | effective: vulkan=1 fp16_storage=1 fp16_arith=0 fp16_packed=0 fp16_uniform=0 bf16_storage=0 int8=0 image_storage=0 packing=0 winograd=1 sgemm=1 threads=1 | device fp16_storage=1 fp16_arith=1 fp16_uniform=1 bug_implicit_fp16_arith=0
+  GLSL نسيج→نسيج: وسيط 13651 · أدنى 13386 · أعلى 60912 ms
+  ncnn نسيج→نسيج: وسيط 8407 · أدنى 8252 · أعلى 8557 ms
+    وسيط المراحل: قراءة GL 30 · المقسّم 8367 (جمع النوافذ 5 · تعبئة CPU 19 · extract شاملاً النقل والمزامنة 7532 · PixelShuffle+المتبقي للقلب 675 · رفع القلوب إلى GL 140) ms
+  تحقق موضع الرفع: منطقة 256×256 عند (1920,1904) تعبر حد بلاطة، ncnn مقابل GLSL: maxAbs 0.0034 · PSNR 69.8 dB
+  النسبة ncnn/GLSL (وسيط): 0.62× — ncnn أقصر زمناً في هذا القياس
+بعد القياس: Java: الحد 512 MB · المستخدم 26 MB · المتاح 486 MB · native heap 33 MB · النظام متاح 2819 من 11597 MB
+4K لا يُشغَّل من هذا الزر. أقصى نسيج GL 16384
+الافتراضي يبقى GLSL. هذا الزر لا يغيّر أي إعداد. الأرقام من هذا التشغيل على هذا الجهاز فقط.
