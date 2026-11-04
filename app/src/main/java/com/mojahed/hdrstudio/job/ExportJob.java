@@ -244,7 +244,7 @@ public final class ExportJob implements Runnable {
             kit = new GlKit(new ShaderLoader(ctx.getAssets()));
             if (p.ai && p.aiNcnn) {
                 stage("تحميل نموذج AI على ncnn/Vulkan");
-                ncnn = NcnnSr.open(ctx.getAssets(), true);
+                ncnn = NcnnSr.openForExport(ctx.getAssets());
                 if (!ncnn.loaded || !ncnn.fullVulkan) {
                     String why = ncnn.reason;
                     ncnn.close();

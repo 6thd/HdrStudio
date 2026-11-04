@@ -18,26 +18,56 @@ public final class NcnnSr {
     public static final String NCNN_TAG = "20250503";
     public static final int P = SrEngine.P;
 
-    public final boolean fp16;
+    public final Opts opts;
     public final boolean vulkan;
-    public final boolean winograd, sgemm, packing;
+    /** True if any FP16 storage or arithmetic is in use (not the export mode). */
+    public final boolean fp16;
     public final boolean loaded;
     public final boolean fullVulkan;
     public final String device;
     public final String reason;
+    /** Requested and effective ncnn options as read back from the Net after load_param, plus device quirks. */
+    public final String options;
     public final long loadMs;
     private final long handle;
 
-    /** Net options. production() is what export uses; cpuFp32() is the comparison baseline only. */
+    /**
+     * Net options. Each precision mode is accepted on its own by the phone check; the native side
+     * refuses a mode whose effective precision ncnn would change, so there is no silent fallback.
+     * exportMode() is Vulkan FP32: the only Vulkan mode that passed the tiled check on the phone (2.3.3).
+     */
     public static final class Opts {
-        public final boolean vulkan, fp16, winograd, sgemm, packing;
-        public Opts(boolean vulkan, boolean fp16, boolean winograd, boolean sgemm, boolean packing) {
-            this.vulkan = vulkan; this.fp16 = fp16; this.winograd = winograd; this.sgemm = sgemm; this.packing = packing;
+        // must match the enum in ncnn_sr.cpp
+        static final int F_VULKAN = 1, F_FP16_STORAGE = 2, F_FP16_ARITH = 4, F_FP16_PACKED = 8,
+                F_FP16_UNIFORM = 16, F_WINOGRAD = 32, F_SGEMM = 64, F_PACKING = 128;
+        public final boolean vulkan, fp16Storage, fp16Arith, winograd, sgemm, packing;
+        public Opts(boolean vulkan, boolean fp16Storage, boolean fp16Arith, boolean winograd, boolean sgemm, boolean packing) {
+            this.vulkan = vulkan; this.fp16Storage = fp16Storage; this.fp16Arith = fp16Arith;
+            this.winograd = winograd; this.sgemm = sgemm; this.packing = packing;
         }
-        public static Opts production(boolean fp16) { return new Opts(true, fp16, true, true, false); }
-        public static Opts cpuFp32() { return new Opts(false, false, true, true, false); }
+        public static Opts cpuFp32() { return new Opts(false, false, false, true, true, false); }
+        public static Opts vulkanFp32() { return new Opts(true, false, false, true, true, false); }
+        /** FP16 storage, FP32 arithmetic: the middle mode. */
+        public static Opts vulkanFp16Storage() { return new Opts(true, true, false, true, true, false); }
+        /** FP16 storage and arithmetic (failed the phone check in 2.3.3; not used by export). */
+        public static Opts vulkanFp16() { return new Opts(true, true, true, true, true, false); }
+        public static Opts exportMode() { return vulkanFp32(); }
+        int flags() {
+            int f = 0;
+            if (vulkan) f |= F_VULKAN;
+            if (fp16Storage) f |= F_FP16_STORAGE;
+            if (fp16Arith) f |= F_FP16_ARITH;
+            // fp16 uniform only with fp16 arithmetic (ncnn clears it otherwise); fp16 packed off: packing layout is off
+            if (fp16Arith) f |= F_FP16_UNIFORM;
+            if (winograd) f |= F_WINOGRAD;
+            if (sgemm) f |= F_SGEMM;
+            if (packing) f |= F_PACKING;
+            return f;
+        }
         public String label() {
-            return String.format(Locale.US, "%s %s", vulkan ? "Vulkan" : "CPU", fp16 ? "FP16" : "FP32");
+            String p = !fp16Storage && !fp16Arith ? "FP32"
+                    : fp16Storage && !fp16Arith ? "FP16 storage + FP32 arithmetic" : "FP16 storage + FP16 arithmetic";
+            return (vulkan ? "Vulkan " : "CPU ") + p;
         }
     }
 
@@ -52,28 +82,28 @@ public final class NcnnSr {
         public boolean fullVulkan;
     }
 
-    private NcnnSr(Opts o, long handle, boolean fullVulkan, String device, String reason, long loadMs) {
-        this.fp16 = o.fp16;
+    private NcnnSr(Opts o, long handle, boolean fullVulkan, String device, String reason, String options, long loadMs) {
+        this.opts = o;
         this.vulkan = o.vulkan;
-        this.winograd = o.winograd;
-        this.sgemm = o.sgemm;
-        this.packing = o.packing;
+        this.fp16 = o.fp16Storage || o.fp16Arith;
         this.handle = handle;
         this.loaded = handle != 0;
         this.fullVulkan = fullVulkan;
         this.device = device == null ? "" : device;
         this.reason = reason == null ? "" : reason;
+        this.options = options == null ? "" : options;
         this.loadMs = loadMs;
     }
 
-    public static NcnnSr open(AssetManager am, boolean fp16) { return open(am, Opts.production(fp16)); }
+    /** The mode export and preview use. */
+    public static NcnnSr openForExport(AssetManager am) { return open(am, Opts.exportMode()); }
 
     public static NcnnSr open(AssetManager am, Opts o) {
         long t0 = System.nanoTime();
         try {
             System.loadLibrary("hdrstudio_ncnn");
         } catch (UnsatisfiedLinkError e) {
-            return new NcnnSr(o, 0, false, "", "مكتبة ncnn غير مبنية في هذا الـ APK: " + e.getMessage(), 0);
+            return new NcnnSr(o, 0, false, "", "مكتبة ncnn غير مبنية في هذا الـ APK: " + e.getMessage(), "", 0);
         }
         String device = o.vulkan ? nativeDevice() : "CPU";
         byte[] model;
@@ -84,12 +114,12 @@ public final class NcnnSr {
             while ((n = in.read(buf)) >= 0) bos.write(buf, 0, n);
             model = bos.toByteArray();
         } catch (Exception e) {
-            return new NcnnSr(o, 0, false, device, "تعذر قراءة الأوزان: " + e.getMessage(), 0);
+            return new NcnnSr(o, 0, false, device, "تعذر قراءة الأوزان: " + e.getMessage(), "", 0);
         }
-        long h = nativeCreate(model, o.vulkan, o.fp16, o.winograd, o.sgemm, o.packing);
+        long h = nativeCreate(model, o.flags());
         long ms = (System.nanoTime() - t0) / 1_000_000L;
-        if (h == 0) return new NcnnSr(o, 0, false, device, nativeLastError(), ms);
-        return new NcnnSr(o, h, nativeFullVulkan(h), device, nativeLastError(), ms);
+        if (h == 0) return new NcnnSr(o, 0, false, device, nativeLastError(), "", ms);
+        return new NcnnSr(o, h, nativeFullVulkan(h), device, nativeLastError(), nativeOptions(h), ms);
     }
 
     public void close() { if (handle != 0) nativeDestroy(handle); }
@@ -143,12 +173,13 @@ public final class NcnnSr {
     public String summary() {
         if (!loaded) return "ncnn/Vulkan غير جاهز: " + reason;
         return String.format(Locale.US, "ncnn %s · %s · %s · تحميل %d ms · %s",
-                NCNN_TAG, new Opts(vulkan, fp16, winograd, sgemm, packing).label(),
+                NCNN_TAG, opts.label(),
                 !vulkan ? "CPU" : fullVulkan ? "Vulkan للطبقات المحمّلة" : "ليس Vulkan بالكامل",
                 loadMs, device);
     }
 
-    private static native long nativeCreate(byte[] model, boolean vulkan, boolean fp16, boolean winograd, boolean sgemm, boolean packing);
+    private static native long nativeCreate(byte[] model, int flags);
+    private static native String nativeOptions(long handle);
     private static native void nativeDestroy(long handle);
     private static native int nativeForward(long handle, float[] in, int w, int h, float[] out, long[] phaseNs);
     private static native String nativeLastError();

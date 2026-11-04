@@ -46,69 +46,93 @@ public final class AiEngineCompare {
                 NcnnSr.P, TilePlan.RECEPTIVE_RADIUS));
         r.append(String.format(Locale.US, "الحدود (لم تُوسَّع): maxAbs≤%.3f و PSNR≥%.0f dB لكل منطقة. المناطق على خرج ×4: زوايا وحواف (%d px من الحد) وفواصل (%d px من حد بلاطة داخلي) ومركز.\n",
                 PROPOSED_MAX_ABS, PROPOSED_PSNR_DB, NcnnTileCheck.EDGE, NcnnTileCheck.SEAM));
+        r.append("القبول لكل وضع على حدة: فشل وضع لا يمنع قياس وضع نجح. FP16 الكامل (تخزين وحساب) فشل في 2.3.3 ولا يُعاد هنا.\n");
+        r.append("كل وضع يُرفض إن غيّر ncnn إعدادات الدقة المطلوبة على هذا الجهاز؛ لا رجوع صامت إلى FP16.\n");
         PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
-        boolean allPass = true;
+        java.util.List<NcnnSr.Opts> accepted = new java.util.ArrayList<>();
         try {
             java.util.List<NcnnTileCheck.Case> cases = NcnnTileCheck.load(ctx.getAssets());
-            NcnnSr.Opts[] engines = {NcnnSr.Opts.cpuFp32(), NcnnSr.Opts.production(false), NcnnSr.Opts.production(true)};
-            for (NcnnSr.Opts o : engines) {
+            NcnnSr.Opts[] modes = {NcnnSr.Opts.cpuFp32(), NcnnSr.Opts.vulkanFp32(), NcnnSr.Opts.vulkanFp16Storage()};
+            NcnnTileCheck.Result cpu = null;
+            for (NcnnSr.Opts o : modes) {
                 step(progress, "تحميل " + o.label());
                 NcnnSr net = NcnnSr.open(ctx.getAssets(), o);
                 try {
                     r.append('\n').append(o.label()).append(": ").append(net.summary()).append('\n');
-                    boolean ok = NcnnTileCheck.run(r, net, cases, progress);
-                    r.append(o.label()).append(ok ? ": كل المقارنات ضمن الحد\n" : ": فشل\n");
-                    allPass &= ok;
+                    NcnnTileCheck.Result res = NcnnTileCheck.run(r, net, cases, o.vulkan ? cpu : null, progress);
+                    if (!o.vulkan) cpu = res;
+                    r.append("قبول ").append(o.label()).append(res.pass ? ": ناجح\n" : ": فاشل\n");
+                    if (res.pass && o.vulkan) accepted.add(o);
                 } finally {
                     net.close();
                 }
             }
         } catch (Throwable t) {
-            allPass = false;
             r.append("توقف الفحص: ").append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append('\n');
         }
-        r.append('\n').append(allPass ? "النتيجة: المسار المقسّم يطابق المباشر في المحركات الثلاثة.\n"
-                : "النتيجة: المسار المقسّم لم ينجح. قياس الأداء الكبير لم يُشغَّل.\n");
-        if (allPass) perf(ctx, r, pm, progress);
-        r.append("الافتراضي يبقى GLSL. هذا الزر لا يغيّره. الأرقام من هذا التشغيل على هذا الجهاز فقط.\n");
+        r.append('\n');
+        if (accepted.isEmpty()) {
+            r.append("لا وضع Vulkan مقبول. قياس الأداء لم يُشغَّل.\n");
+        } else {
+            r.append("أوضاع Vulkan المقبولة للقياس التجريبي:");
+            for (NcnnSr.Opts o : accepted) r.append(' ').append(o.label()).append(';');
+            r.append('\n');
+            perf(ctx, r, pm, accepted, progress);
+        }
+        r.append("الافتراضي يبقى GLSL. التصدير التجريبي عبر ncnn يستخدم ").append(NcnnSr.Opts.exportMode().label())
+                .append(". هذا الزر لا يغيّر أي إعداد. الأرقام من هذا التشغيل على هذا الجهاز فقط.\n");
         return r.toString();
     }
 
-    /** Large frame, after the tile check passed: GLSL vs the ncnn path export runs, including transfer, crop and merge. */
-    private static void perf(Context ctx, StringBuilder r, PowerManager pm, Progress progress) {
+    static final int WARMUP = 1, REPS = 5;
+
+    /**
+     * 1080p at workScale 0.5: the network input is 960x540, the output 3840x2160 (x4).
+     * Both engines: the same input, the same tile core T, from an RGBA16F texture to an RGBA16F texture.
+     * GLSL: sr.run + glFinish. ncnn: GL read, RGB pack, tiled forward (gather, CPU pack, extract with
+     * its transfer and sync, PixelShuffle + residual, x4 crop + merge), RGBA pack, GL upload, glFinish.
+     * Warm-up, then REPS runs interleaved GLSL/ncnn; median, min, max.
+     */
+    private static void perf(Context ctx, StringBuilder r, PowerManager pm, java.util.List<NcnnSr.Opts> modes, Progress progress) {
         Egl egl = null;
         GlKit kit = null;
         SrEngine glsl = null;
-        NcnnSr fp16 = null;
         try {
-            step(progress, "تهيئة GLSL و Vulkan FP16");
+            step(progress, "تهيئة GLSL");
             egl = new Egl(false);
             egl.makeCurrentOffscreen();
             kit = new GlKit(new ShaderLoader(ctx.getAssets()));
             glsl = new SrEngine(kit, ctx.getAssets());
             boolean gok = glsl.selfTest(ctx.getAssets());
             r.append("\nالأداء — GLSL: ").append(glsl.status).append(gok ? "" : " (الفحص الذاتي لم يعلن الجاهزية)").append('\n');
-            fp16 = NcnnSr.open(ctx.getAssets(), true);
-            r.append("محرك التصدير ncnn: ").append(fp16.summary()).append('\n');
-            if (!fp16.loaded) return;
             int inW = 960, inH = 540;
             long[] ram = ram(ctx);
             MemoryBudget.Plan mem = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, ram[0], ram[1], true);
-            r.append("1080p workScale 0.5 (دخل الشبكة ").append(inW).append('x').append(inH).append("، خرج ×4). الميزانية: ").append(mem.describe()).append('\n');
-            if (thermalHot(pm)) { r.append("لم يُنفَّذ: الحرارة ليست منخفضة.\n"); return; }
-            step(progress, "زمن 1080p");
-            float[] big = pattern(5, inW, inH);
-            r.append(timeBoth(kit, glsl, fp16, big, inW, inH, mem.tile, "1080p workScale 0.5", pm));
-            r.append(String.format(Locale.US, "  ذاكرة بعد القياس: native heap %d MB · Java %d MB. GPU من تقدير الميزانية وليس قياساً.\n",
+            int tile = mem.tile;
+            TilePlan plan = new TilePlan(inW, inH, tile, NcnnSr.P);
+            r.append(String.format(Locale.US,
+                    "المصدر 1920x1080 بنصف دقة العمل (workScale 0.5): دخل الشبكة %dx%d، الخرج ×4 = %dx%d. نفس الدخل ونفس البلاطة T=%d للمحركين (%d بلاطات، نافذة ncnn ≤%dx%d). إحماء %d ثم %d تكرارات متناوبة.\n",
+                    inW, inH, inW * 4, inH * 4, tile, plan.count(), plan.maxWindowW(), plan.maxWindowH(), WARMUP, REPS));
+            r.append("الميزانية: ").append(mem.describe()).append('\n');
+            float[] img = pattern(5, inW, inH);
+            for (NcnnSr.Opts o : modes) {
+                if (thermalHot(pm)) { r.append(o.label()).append(": لم يُقس، الحرارة ليست منخفضة.\n"); continue; }
+                step(progress, "زمن " + o.label());
+                NcnnSr net = NcnnSr.open(ctx.getAssets(), o);
+                try {
+                    if (!net.loaded) { r.append(o.label()).append(": غير متاح: ").append(net.reason).append('\n'); continue; }
+                    r.append(timeBoth(kit, glsl, net, img, inW, inH, tile, pm));
+                } finally {
+                    net.close();
+                }
+            }
+            r.append(String.format(Locale.US, "ذاكرة بعد القياس: native heap %d MB · Java %d MB. GPU من تقدير الميزانية وليس قياساً.\n",
                     Debug.getNativeHeapAllocatedSize() >> 20,
                     (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) >> 20));
-            MemoryBudget.Plan uhd = MemoryBudget.plan(3840, 2160, false, 3840, 2160, false, false, true, 0.5f, ram[0], ram[1], true);
-            r.append("4K: ").append(uhd.describe()).append(" · أقصى نسيج GL ").append(GlKit.getInt(GLES20.GL_MAX_TEXTURE_SIZE))
-                    .append(" · لم يُشغَّل في هذا الزر.\n");
+            r.append("4K لا يُشغَّل من هذا الزر. أقصى نسيج GL ").append(GlKit.getInt(GLES20.GL_MAX_TEXTURE_SIZE)).append('\n');
         } catch (Throwable t) {
             r.append("توقف قياس الأداء: ").append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append('\n');
         } finally {
-            if (fp16 != null) fp16.close();
             if (glsl != null) glsl.release();
             if (kit != null) kit.release();
             if (egl != null) egl.release();
@@ -128,67 +152,79 @@ public final class AiEngineCompare {
         return pm != null && pm.getCurrentThermalStatus() >= PowerManager.THERMAL_STATUS_MODERATE;
     }
 
-    /**
-     * GLSL: upload + sr.run + glFinish. ncnn: the same steps FramePipeline runs for export,
-     * from an RGBA16F texture back to an RGBA16F texture: GL read, RGB pack, tiled forward
-     * (window gather, CPU pack, extract with its transfer and sync, shuffle, crop+merge),
-     * RGBA pack and upload, then glFinish. Second run of each is reported.
-     */
-    private static String timeBoth(GlKit kit, SrEngine glsl, NcnnSr ncnn, float[] rgb, int w, int h, int tile, String label, PowerManager pm) {
-        timeGlsl(kit, glsl, rgb, w, h, tile);
-        long g1 = timeGlsl(kit, glsl, rgb, w, h, tile);
+    private static String timeBoth(GlKit kit, SrEngine glsl, NcnnSr ncnn, float[] rgb, int w, int h, int tile, PowerManager pm) {
+        int t0Thermal = pm == null ? -1 : pm.getCurrentThermalStatus();
         float[] rgba = new float[w * h * 4];
         for (int i = 0; i < w * h; i++) { rgba[i * 4] = rgb[i * 3]; rgba[i * 4 + 1] = rgb[i * 3 + 1]; rgba[i * 4 + 2] = rgb[i * 3 + 2]; rgba[i * 4 + 3] = 1f; }
         Tex in = kit.tex(w, h, true, asDirect(rgba));
         Tex out = kit.tex(w * 4, h * 4, true);
-        long[] ph = null;
-        NcnnSr.Forward f = null;
-        for (int run = 0; run < 2; run++) {
-            GLES20.glFinish();
-            long t0 = System.nanoTime();
-            float[] px = kit.read(in);
-            int n = w * h;
-            float[] in3 = new float[n * 3];
-            for (int i = 0; i < n; i++) { in3[i * 3] = px[i * 4]; in3[i * 3 + 1] = px[i * 4 + 1]; in3[i * 3 + 2] = px[i * 4 + 2]; }
-            long t1 = System.nanoTime();
-            f = ncnn.forward(in3, w, h, tile, null);
-            long t2 = System.nanoTime();
-            int hn = w * h * 16;
-            float[] o4 = new float[hn * 4];
-            for (int i = 0; i < hn; i++) { o4[i * 4] = f.rgb[i * 3]; o4[i * 4 + 1] = f.rgb[i * 3 + 1]; o4[i * 4 + 2] = f.rgb[i * 3 + 2]; o4[i * 4 + 3] = 1f; }
-            kit.upload(out, asDirect(o4));
-            GLES20.glFinish();
-            long t3 = System.nanoTime();
-            ph = new long[]{t1 - t0, t2 - t1, t3 - t2, t3 - t0};
+        long[] g = new long[REPS];
+        long[][] n = new long[8][REPS]; // total, read, forward, upload, gather, extract, shuffle, merge (+pack in forward)
+        long[] pack = new long[REPS];
+        boolean fullVk = true;
+        try {
+            for (int i = 0; i < WARMUP; i++) { glslOnce(kit, glsl, in, out, tile); ncnnOnce(kit, ncnn, in, out, w, h, tile, null); }
+            for (int i = 0; i < REPS; i++) {
+                // garbage from the previous run is collected outside the timed window
+                System.gc();
+                g[i] = glslOnce(kit, glsl, in, out, tile);
+                long[] ph = new long[8];
+                NcnnSr.Forward f = ncnnOnce(kit, ncnn, in, out, w, h, tile, ph);
+                for (int k = 0; k < 4; k++) n[k][i] = ph[k];
+                n[4][i] = f.tileCopyNs; n[5][i] = f.extractNs; n[6][i] = f.shuffleNs; n[7][i] = f.mergeNs; pack[i] = f.packNs;
+                fullVk &= f.fullVulkan;
+            }
+        } finally {
+            kit.delete(in); kit.delete(out);
         }
-        kit.delete(in); kit.delete(out);
-        long ms = 1_000_000L;
-        TilePlan plan = new TilePlan(w, h, tile, NcnnSr.P);
-        return String.format(Locale.US,
-                "%s بلاطة %d (%d بلاطات، نافذة ≤%dx%d) حرارة %d:\n"
-                        + "  GLSL %d ms (رفع+شبكة+glFinish، بلا قراءة)\n"
-                        + "  ncnn مسار التصدير كلي %d ms = قراءة GL+تحويل %d · مقسّم %d · تحويل RGBA+رفع GL %d\n"
-                        + "  داخل المقسّم: جمع النوافذ %d · تعبئة CPU %d · extract شاملاً النقل والمزامنة %d · PixelShuffle+المتبقي %d · قص ×4 ودمج %d ms · %s\n",
-                label, tile, plan.count(), plan.maxWindowW(), plan.maxWindowH(), pm == null ? -1 : pm.getCurrentThermalStatus(),
-                g1, ph[3] / ms, ph[0] / ms, ph[1] / ms, ph[2] / ms,
-                f.tileCopyNs / ms, f.packNs / ms, f.extractNs / ms, f.shuffleNs / ms, f.mergeNs / ms,
-                f.fullVulkan ? "Vulkan للطبقات" : "ليس Vulkan بالكامل");
+        int t1Thermal = pm == null ? -1 : pm.getCurrentThermalStatus();
+        StringBuilder s = new StringBuilder();
+        s.append(String.format(Locale.US, "%s · حرارة قبل %d بعد %d%s\n", ncnn.opts.label(), t0Thermal, t1Thermal, fullVk ? "" : " · ليس Vulkan بالكامل"));
+        s.append("  الإعدادات الفعلية: ").append(ncnn.options).append('\n');
+        s.append(String.format(Locale.US, "  GLSL نسيج→نسيج: وسيط %s · أدنى %s · أعلى %s ms\n", ms(med(g)), ms(min(g)), ms(max(g))));
+        s.append(String.format(Locale.US, "  ncnn نسيج→نسيج: وسيط %s · أدنى %s · أعلى %s ms\n", ms(med(n[0])), ms(min(n[0])), ms(max(n[0]))));
+        s.append(String.format(Locale.US,
+                "    وسيط المراحل: قراءة GL+تحويل %s · المقسّم %s (جمع النوافذ %s · تعبئة CPU %s · extract شاملاً النقل والمزامنة %s · PixelShuffle+المتبقي %s · قص ×4 ودمج %s) · تحويل RGBA+رفع GL+glFinish %s ms\n",
+                ms(med(n[1])), ms(med(n[2])), ms(med(n[4])), ms(med(pack)), ms(med(n[5])), ms(med(n[6])), ms(med(n[7])), ms(med(n[3]))));
+        double ratio = (double) med(n[0]) / Math.max(1, med(g));
+        s.append(String.format(Locale.US, "  النسبة ncnn/GLSL (وسيط): %.2f×%s\n", ratio, ratio < 1 ? " — ncnn أسرع" : " — GLSL أسرع"));
+        return s.toString();
     }
 
-    /** Upload + sr.run + glFinish. Readback is outside the timed window. */
-    private static long timeGlsl(GlKit kit, SrEngine sr, float[] rgb, int w, int h, int tile) {
-        float[] rgba = new float[w * h * 4];
-        for (int i = 0; i < w * h; i++) { rgba[i * 4] = rgb[i * 3]; rgba[i * 4 + 1] = rgb[i * 3 + 1]; rgba[i * 4 + 2] = rgb[i * 3 + 2]; rgba[i * 4 + 3] = 1f; }
-        Tex in = kit.tex(w, h, true, asDirect(rgba));
-        Tex out = kit.tex(w * 4, h * 4, true);
+    /** sr.run + glFinish between two existing textures. */
+    private static long glslOnce(GlKit kit, SrEngine sr, Tex in, Tex out, int tile) {
         GLES20.glFinish();
         long t0 = System.nanoTime();
         sr.run(in, out, tile);
         GLES20.glFinish();
-        long ms = (System.nanoTime() - t0) / 1_000_000L;
-        kit.delete(in); kit.delete(out);
-        return ms;
+        return System.nanoTime() - t0;
     }
+
+    /** The export path of FramePipeline for one frame. ph (if not null): total, read, forward, upload in ns. */
+    private static NcnnSr.Forward ncnnOnce(GlKit kit, NcnnSr ncnn, Tex in, Tex out, int w, int h, int tile, long[] ph) {
+        GLES20.glFinish();
+        long t0 = System.nanoTime();
+        float[] px = kit.read(in);
+        int n = w * h;
+        float[] in3 = new float[n * 3];
+        for (int i = 0; i < n; i++) { in3[i * 3] = px[i * 4]; in3[i * 3 + 1] = px[i * 4 + 1]; in3[i * 3 + 2] = px[i * 4 + 2]; }
+        long t1 = System.nanoTime();
+        NcnnSr.Forward f = ncnn.forward(in3, w, h, tile, null);
+        long t2 = System.nanoTime();
+        int hn = n * 16;
+        float[] o4 = new float[hn * 4];
+        for (int i = 0; i < hn; i++) { o4[i * 4] = f.rgb[i * 3]; o4[i * 4 + 1] = f.rgb[i * 3 + 1]; o4[i * 4 + 2] = f.rgb[i * 3 + 2]; o4[i * 4 + 3] = 1f; }
+        kit.upload(out, asDirect(o4));
+        GLES20.glFinish();
+        long t3 = System.nanoTime();
+        if (ph != null) { ph[0] = t3 - t0; ph[1] = t1 - t0; ph[2] = t2 - t1; ph[3] = t3 - t2; }
+        return f;
+    }
+
+    private static long med(long[] a) { long[] b = a.clone(); java.util.Arrays.sort(b); return b[b.length / 2]; }
+    private static long min(long[] a) { long m = Long.MAX_VALUE; for (long v : a) m = Math.min(m, v); return m; }
+    private static long max(long[] a) { long m = Long.MIN_VALUE; for (long v : a) m = Math.max(m, v); return m; }
+    private static String ms(long ns) { return String.format(Locale.US, "%.0f", ns / 1e6); }
 
     private static FloatBuffer asDirect(float[] rgba) {
         FloatBuffer fb = ByteBuffer.allocateDirect(rgba.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();

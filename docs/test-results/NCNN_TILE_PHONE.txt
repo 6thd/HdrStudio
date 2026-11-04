@@ -1,0 +1,19 @@
+HDR Studio 2.3.3-test on the phone (SCA-LX9, Maleoon GPU) — tiled path vs direct
+Reported by the owner on 2026-11-04 after running «فحص بلاطات ncnn ثم المقارنة».
+APK: 2.3.3-test sha256 10a2aaf3d1c35d01ca78cbdf1fc1d04c80000b6e0e1e1b16249bf1bf5b898afa
+     (classes.dex 4e86bb27..., native .so unchanged from 2.3.2: b7fff38b...)
+
+Result as reported:
+- CPU FP32:    tiled matches direct within the limits (maxAbs <= 0.02, PSNR >= 40 dB per region). PASS.
+- Vulkan FP32: tiled matches direct within the limits. PASS.
+- Vulkan FP16 (FP16 storage + FP16 arithmetic): FAIL against the same, unwidened limits.
+
+Decisions recorded with this result:
+- The tile geometry (TilePlan, 2.3.3) is accepted as is and is not to be changed.
+- Acceptance is per mode. FP16's failure does not block measuring Vulkan FP32.
+- The limits are not widened to pass FP16. GLSL stays the default engine.
+- Experimental ncnn export uses Vulkan FP32 (NcnnSr.Opts.exportMode, from 2.3.4).
+- One middle mode is tried (FP16 storage, FP32 arithmetic). If it fails, FP32 stays the ncnn mode
+  and the work moves to measuring its practical benefit; FP16 is not chased further.
+
+The full report text was not attached to the repository; the per-region numbers live in the phone report.

@@ -82,7 +82,7 @@ public final class PreviewRenderer {
             egl.makeCurrentOffscreen();
             k = new GlKit(new ShaderLoader(ctx.getAssets()));
             if (p.ai && p.aiNcnn) {
-                ncnn = NcnnSr.open(ctx.getAssets(), true);
+                ncnn = NcnnSr.openForExport(ctx.getAssets());
                 if (!ncnn.loaded || !ncnn.fullVulkan)
                     throw new IllegalStateException("ncnn/Vulkan غير متاح: " + ncnn.reason + "\nاختر محرك GLSL.");
             } else if (p.ai) {

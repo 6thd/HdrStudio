@@ -11,6 +11,10 @@ on:
         description: "Compare the bundled AI weights with the official Real-ESRGAN release"
         type: boolean
         default: false
+      allow_unstable_key:
+        description: "Allow a throw-away debug key when the HDR_KEYSTORE_* secrets are missing (the APK will not update an existing install)"
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -31,17 +35,29 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
         with:
-          packages: "platforms;android-35 build-tools;35.0.0"
-      - name: Restore release keystore (optional)
+          packages: "platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018 cmake;3.22.1"
+      - name: ncnn 20250503 android-vulkan (prebuilt static library, checksum pinned)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/ncnn.zip" https://github.com/Tencent/ncnn/releases/download/20250503/ncnn-20250503-android-vulkan.zip
+          echo "4b54cd11094dae1371c59fb202dfd92d22962ffaef04317bdf99b12c09f44ed3  $RUNNER_TEMP/ncnn.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/ncnn.zip" -d "$RUNNER_TEMP"
+          D="$RUNNER_TEMP/ncnn-20250503-android-vulkan/arm64-v8a/lib/cmake/ncnn"
+          test -f "$D/ncnnConfig.cmake"
+          echo "NCNN_DIR=$D" >> "$GITHUB_ENV"
+      - name: Restore signing keystore
         env:
           KS_B64: ${{ secrets.HDR_KEYSTORE_BASE64 }}
+          ALLOW: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unstable_key }}
         run: |
           if [ -n "$KS_B64" ]; then
             echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "HDR_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-            echo "Signing with the stored release key (stable: updates install over older builds)."
-          else
+            echo "Signing test and release APKs with the stored key (stable: updates install over older builds)."
+          elif [ "$ALLOW" = "true" ]; then
             echo "::warning::No HDR_KEYSTORE_BASE64 secret: test APK uses a throw-away debug key; release APK will be unsigned."
+          else
+            echo "::error::No HDR_KEYSTORE_BASE64 secret. A test build must be signed with the stable key. Add the HDR_KEYSTORE_* secrets, or rerun with allow_unstable_key."
+            exit 1
           fi
       - name: JVM unit tests (colour maths, metadata, scene cuts, HEVC bitstream parser)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg && tools/jvmtests/run.sh
@@ -51,13 +67,32 @@ jobs:
           HDR_KEY_ALIAS: ${{ secrets.HDR_KEY_ALIAS }}
           HDR_KEY_PASSWORD: ${{ secrets.HDR_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleDebug assembleRelease
-      - name: Collect APKs
+      - name: Collect APKs and build record
         run: |
           mkdir -p out
           cp app/build/outputs/apk/debug/*.apk out/HDR-Studio-test.apk
           ls app/build/outputs/apk/release/
           cp app/build/outputs/apk/release/*.apk out/ 2>/dev/null || true
           sha256sum out/*.apk | tee out/SHA256SUMS.txt
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          mkdir -p "$RUNNER_TEMP/apk" && unzip -q -o out/HDR-Studio-test.apk 'lib/*' -d "$RUNNER_TEMP/apk"
+          SO="$RUNNER_TEMP/apk/lib/arm64-v8a/libhdrstudio_ncnn.so"
+          test -f "$SO" || { echo "::error::libhdrstudio_ncnn.so is missing from the test APK"; exit 1; }
+          ALIGN=$("$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -lW "$SO" | awk '$1=="LOAD"{print $NF}' | sort -u | tr '\n' ' ')
+          {
+            echo "HDR Studio $(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)-test (GitHub Actions)"
+            echo "git_commit: $GITHUB_SHA"
+            echo "ref: $GITHUB_REF_NAME  run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            "$BT/aapt2" dump badging out/HDR-Studio-test.apk | head -1
+            "$BT/apksigner" verify --print-certs out/HDR-Studio-test.apk | grep -E "SHA-256|DN" | sed 's/^/signing: /'
+            echo "native: $(sha256sum "$SO" | cut -d' ' -f1)  lib/arm64-v8a/libhdrstudio_ncnn.so  built from app/src/main/cpp at this commit"
+            echo "ELF LOAD alignment: $ALIGN"
+            echo "ncnn: 20250503 android-vulkan sha256 4b54cd11094dae1371c59fb202dfd92d22962ffaef04317bdf99b12c09f44ed3"
+            echo "NDK: 27.2.12479018  CMake: 3.22.1"
+            echo "classes.dex: $(unzip -p out/HDR-Studio-test.apk classes.dex | sha256sum | cut -d' ' -f1)"
+            cat out/SHA256SUMS.txt
+          } | tee out/BUILD_INFO.txt
       - uses: actions/upload-artifact@v4
         with:
           name: HDR-Studio-apk

@@ -25,11 +25,29 @@ struct NetHolder {
     // Destroyed after net. load_model() keeps pointers into model.
     std::vector<unsigned char> model;
     ncnn::Net net;
-    bool fp16 = false;
     bool vulkan = true;
     bool full_vulkan = false;
     int gpu_index = -1;
+    std::string options;  // requested and effective precision options, device quirks
 };
+
+// Flags of NcnnSr.Opts.flags(). Keep in sync with NcnnSr.java.
+enum {
+    F_VULKAN = 1, F_FP16_STORAGE = 2, F_FP16_ARITH = 4, F_FP16_PACKED = 8,
+    F_FP16_UNIFORM = 16, F_WINOGRAD = 32, F_SGEMM = 64, F_PACKING = 128
+};
+
+static std::string opt_str(const ncnn::Option& o) {
+    std::ostringstream s;
+    s << "vulkan=" << o.use_vulkan_compute
+      << " fp16_storage=" << o.use_fp16_storage << " fp16_arith=" << o.use_fp16_arithmetic
+      << " fp16_packed=" << o.use_fp16_packed << " fp16_uniform=" << o.use_fp16_uniform
+      << " bf16_storage=" << o.use_bf16_storage << " int8=" << o.use_int8_inference
+      << " image_storage=" << o.use_image_storage << " packing=" << o.use_packing_layout
+      << " winograd=" << o.use_winograd_convolution << " sgemm=" << o.use_sgemm_convolution
+      << " threads=" << o.num_threads;
+    return s.str();
+}
 
 static void set_err(const std::string& s) { g_err = s; LOGI("%s", s.c_str()); }
 
@@ -93,9 +111,9 @@ JNIEXPORT jstring JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeDevice(JNIE
 }
 
 JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(
-        JNIEnv* e, jclass, jbyteArray model, jboolean vulkan, jboolean fp16, jboolean winograd, jboolean sgemm, jboolean packing) {
-    // vulkan=false is the CPU FP32 comparison baseline. Export only opens vulkan=true.
-    const bool use_vk = vulkan == JNI_TRUE;
+        JNIEnv* e, jclass, jbyteArray model, jint flags) {
+    // Vulkan off is the CPU FP32 comparison baseline only. Export opens Vulkan FP32.
+    const bool use_vk = (flags & F_VULKAN) != 0;
     if (use_vk && !ensure_gpu()) return 0;
     g_err.clear();
     jbyte* bytes = e->GetByteArrayElements(model, nullptr);
@@ -107,27 +125,51 @@ JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(
     NetHolder* h = new NetHolder();
     std::string berr;
     if (!srvgg_build_ncnn_bin(weights.data(), weights.size(), h->model, berr)) { set_err(berr); delete h; return 0; }
-    h->fp16 = fp16 == JNI_TRUE;
     h->vulkan = use_vk;
     h->gpu_index = use_vk ? 0 : -1;
     ncnn::Option opt;
     opt.use_vulkan_compute = use_vk;
-    opt.use_fp16_packed = false;
-    opt.use_fp16_storage = h->fp16;
-    opt.use_fp16_arithmetic = h->fp16;
+    opt.use_fp16_storage = (flags & F_FP16_STORAGE) != 0;
+    opt.use_fp16_arithmetic = (flags & F_FP16_ARITH) != 0;
+    opt.use_fp16_packed = (flags & F_FP16_PACKED) != 0;
+    opt.use_fp16_uniform = (flags & F_FP16_UNIFORM) != 0;  // ncnn's default is true; set explicitly
     opt.use_bf16_storage = false;
-    opt.use_packing_layout = packing == JNI_TRUE;
-    opt.use_winograd_convolution = winograd == JNI_TRUE;
-    opt.use_sgemm_convolution = sgemm == JNI_TRUE;
+    opt.use_image_storage = false;
+    opt.use_packing_layout = (flags & F_PACKING) != 0;
+    opt.use_winograd_convolution = (flags & F_WINOGRAD) != 0;
+    opt.use_sgemm_convolution = (flags & F_SGEMM) != 0;
     opt.use_int8_inference = false;
     opt.use_int8_packed = false;
     opt.use_int8_storage = false;
     opt.use_int8_arithmetic = false;
+    opt.use_int8_uniform = false;
     opt.num_threads = use_vk ? 1 : ncnn::get_big_cpu_count();
+    const ncnn::Option requested = opt;
     h->net.opt = opt;
     if (use_vk) h->net.set_vulkan_device(ncnn::get_gpu_device(0));
     std::string param = srvgg_ncnn_param();
     if (h->net.load_param_mem(param.c_str()) != 0) { set_err("load_param_mem failed"); delete h; return 0; }
+    // load_param sanitizes net.opt in place for the device. What is left is what runs.
+    const ncnn::Option& eff = h->net.opt;
+    std::ostringstream o;
+    o << "requested: " << opt_str(requested) << " | effective: " << opt_str(eff);
+    if (use_vk) {
+        const ncnn::GpuInfo& gi = ncnn::get_gpu_device(0)->info;
+        o << " | device fp16_storage=" << gi.support_fp16_storage() << " fp16_arith=" << gi.support_fp16_arithmetic()
+          << " fp16_uniform=" << gi.support_fp16_uniform() << " bug_implicit_fp16_arith=" << gi.bug_implicit_fp16_arithmetic();
+    }
+    h->options = o.str();
+    // No silent change of precision: refuse the mode instead of running a different one.
+    if (eff.use_vulkan_compute != requested.use_vulkan_compute
+            || eff.use_fp16_storage != requested.use_fp16_storage
+            || eff.use_fp16_arithmetic != requested.use_fp16_arithmetic
+            || eff.use_fp16_packed != requested.use_fp16_packed
+            || eff.use_fp16_uniform != requested.use_fp16_uniform
+            || eff.use_bf16_storage || eff.use_int8_inference) {
+        set_err("ncnn changed the precision options for this device; mode refused. " + h->options);
+        delete h;
+        return 0;
+    }
     // References h->model. The vector is a member and outlives the Net.
     int consumed = h->net.load_model(h->model.data());
     if (consumed != (int)h->model.size()) {
@@ -145,8 +187,13 @@ JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(
             }
         }
     }
-    LOGI("net ready vulkan=%d fp16=%d full_vulkan=%d threads=%d", use_vk ? 1 : 0, h->fp16 ? 1 : 0, h->full_vulkan ? 1 : 0, opt.num_threads);
+    LOGI("net ready full_vulkan=%d %s", h->full_vulkan ? 1 : 0, h->options.c_str());
     return reinterpret_cast<jlong>(h);
+}
+
+JNIEXPORT jstring JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeOptions(JNIEnv* e, jclass, jlong handle) {
+    NetHolder* h = reinterpret_cast<NetHolder*>(handle);
+    return e->NewStringUTF(h ? h->options.c_str() : "");
 }
 
 JNIEXPORT void JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeDestroy(JNIEnv*, jclass, jlong handle) {

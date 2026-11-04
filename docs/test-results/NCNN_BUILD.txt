@@ -69,3 +69,12 @@ native: lib/arm64-v8a/libhdrstudio_ncnn.so is byte-identical to the one in 2.3.2
   It passed g++ -fsyntax-only against the ncnn 20250503 android-vulkan headers (archive sha256 4b54cd11..., same as above),
   but was not compiled with the NDK here: dl.google.com is blocked from this workspace. The next NDK build replaces the .so.
   2.3.2's nativeLayer/nativeProbe and NcnnMatchProbe are not in this source; their phone result (direct, packing, PixelShuffle, GL re-upload correct) is recorded.
+
+----------------------------------------------------------------
+HDR Studio 2.3.4-test (source in work/ncnn-vulkan; no local APK)
+The native JNI changed: nativeCreate(byte[], int flags) and nativeOptions(long). The 2.3.2 .so cannot run it,
+and the NDK cannot be downloaded in the workspace that wrote this change, so 2.3.4 is built only by
+.github/workflows/build.yml: NDK 27.2.12479018, CMake 3.22.1, ncnn 20250503 android-vulkan (sha256 pinned),
+native library built from app/src/main/cpp at the built commit, signed with the HDR_KEYSTORE_* secrets.
+The run's BUILD_INFO.txt is the build record (commit, signing certificate SHA-256, .so SHA-256, ELF alignment).
+ncnn_sr.cpp passed g++ -fsyntax-only against the ncnn 20250503 headers before the push.

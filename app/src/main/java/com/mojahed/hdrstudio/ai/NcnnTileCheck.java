@@ -11,7 +11,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Direct vs tiled on the phone, for each engine (CPU FP32, Vulkan FP32, Vulkan FP16).
+ * Direct vs tiled on the phone, per precision mode (CPU FP32, Vulkan FP32, Vulkan FP16 storage
+ * with FP32 arithmetic). Vulkan modes are also compared with CPU FP32 on the same large input.
  * The tiled run is {@link NcnnSr#forward}, the same method export calls.
  * Same pixels, regions and limits as tools/ncnn/tile_check.py; the limits are not relaxed.
  *
@@ -51,19 +52,36 @@ public final class NcnnTileCheck {
         return vulkan ? new int[]{64, 32, 16} : new int[]{64, 32};
     }
 
-    /** Appends the report for one engine. Returns true only if every comparison is inside the limits. */
-    public static boolean run(StringBuilder r, NcnnSr net, List<Case> cases, AiEngineCompare.Progress progress) {
-        String tag = net.summary();
-        if (!net.loaded) { r.append(tag).append('\n'); return false; }
+    /** One mode's outcome. Each mode is accepted on its own; one failing mode does not block another. */
+    public static final class Result {
+        public boolean pass;
+        /** Direct output of the largest case, kept from CPU FP32 as the reference for the Vulkan modes. */
+        public float[] bigDirect;
+        public int bigW, bigH;
+    }
+
+    /**
+     * Appends the report for one mode. cpuRef (CPU FP32's result, or null) adds "vs CPU FP32"
+     * lines on the large input for the direct and every tiled run, with the same regions and limits.
+     */
+    public static Result run(StringBuilder r, NcnnSr net, List<Case> cases, Result cpuRef, AiEngineCompare.Progress progress) {
+        Result res = new Result();
+        if (!net.loaded) { r.append("  غير متاح: ").append(net.reason).append('\n'); return res; }
+        r.append("  الإعدادات الفعلية: ").append(net.options).append('\n');
         boolean all = true;
+        Case big = cases.get(0);
+        for (Case c : cases) if (c.w * c.h > big.w * big.h) big = c;
         for (Case c : cases) {
-            if (progress != null) progress.onProgress(String.format(Locale.US, "%s %dx%d", net.vulkan ? (net.fp16 ? "Vulkan FP16" : "Vulkan FP32") : "CPU FP32", c.w, c.h));
+            if (progress != null) progress.onProgress(String.format(Locale.US, "%s %dx%d", net.opts.label(), c.w, c.h));
             long t0 = System.nanoTime();
             NcnnSr.Forward d = net.direct(c.in, c.w, c.h);
             long dm = (System.nanoTime() - t0) / 1_000_000L;
             r.append(String.format(Locale.US, " %dx%d → %dx%d · المباشر %d ms%s\n", c.w, c.h, c.w * 4, c.h * 4, dm,
                     net.vulkan && !d.fullVulkan ? " · ليس Vulkan بالكامل" : ""));
+            float[] cpu = cpuRef != null && c == big && cpuRef.bigDirect != null && cpuRef.bigW == c.w && cpuRef.bigH == c.h ? cpuRef.bigDirect : null;
+            if (c == big) { res.bigDirect = d.rgb; res.bigW = c.w; res.bigH = c.h; }
             if (c.ref != null) all &= line(r, "المباشر مقابل مرجع NumPy", d.rgb, c.ref, c.w, c.h, 1 << 20);
+            if (cpu != null) all &= line(r, "المباشر مقابل CPU FP32 المباشر", d.rgb, cpu, c.w, c.h, 1 << 20);
             for (int t : tiles(c, net.vulkan)) {
                 TilePlan plan = new TilePlan(c.w, c.h, t, NcnnSr.P);
                 long s0 = System.nanoTime();
@@ -73,9 +91,11 @@ public final class NcnnTileCheck {
                         t, plan.count(), plan.maxWindowW(), plan.maxWindowH(), sm);
                 all &= line(r, label, f.rgb, d.rgb, c.w, c.h, t);
                 if (c.ref != null) all &= line(r, "  مقسّم T=" + t + " مقابل مرجع NumPy", f.rgb, c.ref, c.w, c.h, t);
+                if (cpu != null) all &= line(r, "  مقسّم T=" + t + " مقابل CPU FP32 المباشر", f.rgb, cpu, c.w, c.h, t);
             }
         }
-        return all;
+        res.pass = all;
+        return res;
     }
 
     /** region: 0 corner, 1 edge, 2 seam, 3 centre. */
