@@ -91,3 +91,15 @@ ncnn_sr.cpp passed g++ -fsyntax-only against the ncnn 20250503 headers before th
 - JVM tests use real org.json (stleary/JSON-java 20240303, commit f9b5587c87aaf02e4a5ed1991d48d6c05993624a,
   tools/jvmtests/org_json.sh) ahead of android.jar, for the v2.1 compile and NotesTests' class loader.
   Clean run: fresh clone, unmodified android-35.jar, empty work dir -> JVM SUMMARY pass=145 fail=0 missing=0.
+
+2.3.4-test, first green GitHub Actions build (run #3, https://github.com/6thd/HdrStudio/actions/runs/41833987862)
+git_commit: db599810b95f76e9df99a28dbd97be5bd1896fbb  package com.mojahed.hdrstudio.test  versionCode 11
+signing certificate SHA-256: 1ffb4f14c6df8f7e90cfb5efe84a04f6a46a282120d016ac1cb7213ba4b4095a (the permanent test key; same as installed 2.3.3-test)
+native: libhdrstudio_ncnn.so a515dd88c9c50b34499c4b077eae270b8d2903994e14b627df16dba3716808bc, built from app/src/main/cpp
+        at that commit with NDK 27.2.12479018 + ncnn 20250503 android-vulkan; ELF LOAD alignment 0x4000; JNI symbols checked
+classes.dex: 88c696901cfa47d75be8e4e6610a41b3bae0d18583a08bd1f496d3cd6266786f
+test APK:    ab43ff52d4f633dc6e847d5dbadc0618c40a3331ddc694372c7e4492192f8d4c
+release APK: 28e89234fb03d96a56779eebe943b14fe448d352969a584a2674558056feed3b (not distributed)
+JVM SUMMARY pass=145 fail=0 missing=0 (org.json commit f9b5587c; jar bytes differ by JDK, the commit is the pin)
+Runs #1 and #2 failed before any APK: scripts without the executable bit (exit 126), then numpy missing for the ramp streams.
+Note: the alias secret is the word "test", so GitHub masks that word as *** throughout the logs.
