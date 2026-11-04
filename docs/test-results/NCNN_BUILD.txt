@@ -121,3 +121,7 @@ was hashed. From run #5 on, BUILD_INFO lists every dex file and one hash over al
   so each phone report prints its own commit and the SHA-256 of the installed APK; it must equal ef61acdc... for this build.
 2.3.6 (run #6, commit 2523855): its log was never retrievable; its identity is only the stored acceptance (versionCode 13)
   and the artifact digest 3b4a46ca713acd55608e8cd225ea69f4f11169df456922c942d16a2914f4b7fb. The APK's own hash is unknown.
+2.3.8-test, Actions run #8 (https://github.com/6thd/HdrStudio/actions/runs/41903892100), commit 0bb31d42f6fc5c72a001931f893b3cfdc72ee6e2: green.
+  versionCode 15 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (identical to 2.3.7, so 2.3.7's ncnn acceptance
+  and FP16-storage decision carry over) · dex (all) 84cf94f2bbe33eccc3d146014058848167a3b38eab0d613a9aed1c22d43ffa92
+  test APK 90cbac38270a7d268364d7ce507715d513c3e9db50d918aebd64e931e3759a68 (the phone report must print this).
