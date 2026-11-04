@@ -16,7 +16,9 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main]
+    # a push to the working branch builds the test APK (artifact only, no release); main kept for later
+    branches: [main, work/ncnn-vulkan]
+    paths-ignore: ["docs/**", "**/*.md"]
 
 permissions:
   contents: read          # no automatic public releases; APKs are workflow artifacts
