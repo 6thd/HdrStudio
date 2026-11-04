@@ -67,7 +67,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private Switch aiSwitch, ncnnSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
     private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
     private TextView bitrateLabel, posLabel;
-    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, perfBtn, previewBtn, clipBtn, openBtn;
+    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, perfBtn, previewBtn, clipBtn, abBtn, openBtn;
     private ProgressBar progress;
     private CompareView compare;
     private VideoView video;
@@ -79,6 +79,10 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         buildUi();
+        android.content.IntentFilter sf = new android.content.IntentFilter(Intent.ACTION_SCREEN_OFF);
+        sf.addAction(Intent.ACTION_SCREEN_ON);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenRx, sf, android.content.Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(screenRx, sf);
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         if (st.caps == null) {
@@ -98,6 +102,29 @@ public final class MainActivity extends Activity implements JobManager.Listener 
 
     @Override protected void onStart() { super.onStart(); JobManager.get().addListener(this); }
     @Override protected void onStop() { JobManager.get().removeListener(this); super.onStop(); }
+    @Override protected void onResume() { super.onResume(); com.mojahed.hdrstudio.core.RunMonitor.setForeground(true); }
+    @Override protected void onPause() { com.mojahed.hdrstudio.core.RunMonitor.setForeground(false); super.onPause(); }
+
+    // screen on/off for RunMonitor (timed runs report it as an interruption)
+    private final android.content.BroadcastReceiver screenRx = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(android.content.Context c, Intent i) {
+            com.mojahed.hdrstudio.core.RunMonitor.mark(Intent.ACTION_SCREEN_OFF.equals(i.getAction()) ? "انطفأت الشاشة" : "أضيئت الشاشة");
+        }
+    };
+
+    @Override protected void onDestroy() {
+        try { unregisterReceiver(screenRx); } catch (Exception ignored) { }
+        super.onDestroy();
+    }
+
+    /** Keeps the screen on while a measurement or the A/B export runs (cleared when it ends). */
+    private void keepScreen(boolean on) {
+        if (on) getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        com.mojahed.hdrstudio.core.RunMonitor.mark(on ? "إبقاء الشاشة مضاءة: تفعيل" : "إبقاء الشاشة مضاءة: إيقاف");
+    }
+
+    private boolean abRunning;
 
     private void bg(Runnable r) { new Thread(r, "ui-worker").start(); }
     private void ui(Runnable r) { main.post(r); }
@@ -210,6 +237,9 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         c6.addView(row, lp(6));
         previewBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runPreview(); } });
         clipBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startExport(true); } });
+        abBtn = button("اختبار تصدير A/B: ثانية واحدة SDR بـ GLSL ثم ncnn", false);
+        abBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startAbExport(); } });
+        c6.addView(abBtn, lp(4));
         previewNote = text("", 12, dim);
         c6.addView(previewNote, lp(4));
         compare = new CompareView(this);
@@ -433,6 +463,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         compareText.setText("جارٍ فحص المسار المقسّم لـ ncnn لكل وضع (CPU FP32 وVulkan FP32 وVulkan تخزين FP16 مع حساب FP32) ثم قياس أداء الأوضاع المقبولة. لا يُستخدم فيديو ولا يُفتح التصدير.");
         compareBtn.setEnabled(false);
         perfBtn.setEnabled(false);
+        keepScreen(true);
         bg(new Runnable() { @Override public void run() {
             final String report = com.mojahed.hdrstudio.ai.AiEngineCompare.run(getApplicationContext(), new com.mojahed.hdrstudio.ai.AiEngineCompare.Progress() {
                 @Override public void onProgress(final String line) {
@@ -440,7 +471,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
                 }
             });
             st.aiCompareReport = report;
-            ui(new Runnable() { @Override public void run() { compareBtn.setEnabled(true); perfBtn.setEnabled(true); compareText.setText(report); } });
+            ui(new Runnable() { @Override public void run() { keepScreen(false); compareBtn.setEnabled(true); perfBtn.setEnabled(true); compareText.setText(report); } });
         }});
     }
 
@@ -448,6 +479,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         compareText.setText("جارٍ قياس الأداء للأوضاع المقبولة في فحص هذه النسخة، بعد انتظار تبريد الهاتف إن لزم. لا يُستخدم فيديو ولا يُفتح التصدير.");
         compareBtn.setEnabled(false);
         perfBtn.setEnabled(false);
+        keepScreen(true);
         bg(new Runnable() { @Override public void run() {
             final String report = com.mojahed.hdrstudio.ai.AiEngineCompare.runPerfOnly(getApplicationContext(), new com.mojahed.hdrstudio.ai.AiEngineCompare.Progress() {
                 @Override public void onProgress(final String line) {
@@ -455,7 +487,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
                 }
             });
             st.aiCompareReport = report;
-            ui(new Runnable() { @Override public void run() { compareBtn.setEnabled(true); perfBtn.setEnabled(true); compareText.setText(report); } });
+            ui(new Runnable() { @Override public void run() { keepScreen(false); compareBtn.setEnabled(true); perfBtn.setEnabled(true); compareText.setText(report); } });
         }});
     }
 
@@ -539,12 +571,35 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         startForegroundService(new Intent(this, ExportService.class));
     }
 
+    /** One second of the current position, exported with GLSL and with ncnn, same settings (job/AbExport). */
+    private void startAbExport() {
+        if (st.src == null) { toastText("اختر فيديو أولاً"); return; }
+        if (JobManager.get().busy()) { toastText("هناك مهمة قيد التشغيل"); return; }
+        Presets ps = preset();
+        if (ps.hdr || st.src.isHdr()) { statusText.setText("اختبار A/B لمقطع SDR فقط: اختر مصدراً SDR وإعداد تصدير SDR."); return; }
+        PipelineParams pp = params();
+        if (!pp.ai) { statusText.setText("فعّل AI أولاً: الاختبار يقارن محركي AI بالإعدادات نفسها."); return; }
+        EncodeSelfTest.Result r = currentSelfTest();
+        if (r == null || !r.usable()) { statusText.setText("شغّل «فحص مسار التصدير» أولاً للتأكد من صحة الألوان."); return; }
+        ExportRequest q = new ExportRequest();
+        q.uri = st.uri; q.src = st.src; q.params = pp; q.preset = ps; q.targetShortSide = targetShort();
+        q.bitrateOverride = bitrate(); q.measureLight = false; q.keepAudio = audioSwitch.isChecked(); q.selfTest = r;
+        q.startUs = posUs(); q.endUs = q.startUs + com.mojahed.hdrstudio.job.AbExport.LENGTH_US;
+        JobManager.get().setPendingAb(new com.mojahed.hdrstudio.job.AbExport(q));
+        abRunning = true;
+        keepScreen(true);
+        video.setVisibility(View.GONE);
+        startForegroundService(new Intent(this, ExportService.class));
+    }
+
     @Override
     public void onUpdate(JobManager.Snapshot s) {
+        if (abRunning && s.abFinal) { abRunning = false; keepScreen(false); }
         if (statusText == null) return;
         boolean running = s.state == JobManager.State.RUNNING;
         exportBtn.setText(running ? "إلغاء" : "بدء التصدير");
         clipBtn.setEnabled(!running);
+        if (abBtn != null) abBtn.setEnabled(!running);
         progress.setProgress((int) (s.fraction * 1000));
         String head = (s.preview ? "[معاينة] " : "") + s.stage + (s.thermal.isEmpty() ? "" : " · " + s.thermal);
         statusText.setText(s.state == JobManager.State.FAILED ? head + "\n" + s.error : head);

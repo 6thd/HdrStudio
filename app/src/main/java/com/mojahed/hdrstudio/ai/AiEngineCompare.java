@@ -37,6 +37,7 @@ public final class AiEngineCompare {
     public static String run(Context ctx, Progress progress) {
         StringBuilder r = new StringBuilder();
         r.append("فحص المسار المقسّم لـ ncnn — ليس نتيجة تصدير HDR\n");
+        r.append(com.mojahed.hdrstudio.core.BuildIdentity.describe(ctx)).append('\n');
         r.append("الجهاز: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
                 .append(" API ").append(android.os.Build.VERSION.SDK_INT).append('\n');
         r.append("النموذج: realesr-general-x4v3 SRVGGNetCompact · الأوزان sha256=b21527dda6ac91a00574295259bbbd5690afa9334ca49416ed35244ee1a512d3 (لم تتغير)\n");
@@ -86,7 +87,7 @@ public final class AiEngineCompare {
             r.append('\n');
             perf(ctx, r, pm, accepted, progress);
         }
-        r.append("الافتراضي يبقى GLSL. التصدير التجريبي عبر ncnn يستخدم ").append(NcnnSr.Opts.exportMode().label())
+        r.append("الافتراضي يبقى GLSL. التصدير التجريبي عبر ncnn يستخدم ").append(exportMode(ctx).label())
                 .append(". هذا الزر لا يغيّر أي إعداد. الأرقام من هذا التشغيل على هذا الجهاز فقط.\n");
         return r.toString();
     }
@@ -102,6 +103,7 @@ public final class AiEngineCompare {
     public static String runPerfOnly(Context ctx, Progress progress) {
         StringBuilder r = new StringBuilder();
         r.append("قياس الأداء فقط — ليس نتيجة تصدير HDR\n");
+        r.append(com.mojahed.hdrstudio.core.BuildIdentity.describe(ctx)).append('\n');
         r.append("الجهاز: ").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL)
                 .append(" API ").append(android.os.Build.VERSION.SDK_INT).append('\n');
         android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -128,6 +130,56 @@ public final class AiEngineCompare {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putLong("versionCode", versionCode(ctx)).putString("accepted", k.toString())
                 .putLong("time", System.currentTimeMillis()).apply();
+    }
+
+    /**
+     * The experimental ncnn export mode for this build: FP16 storage + FP32 arithmetic only if this build's
+     * check accepted it and this build's timing confirmed it (see decide()); otherwise Vulkan FP32.
+     * GLSL stays the default engine either way; this only picks ncnn's precision when ncnn is chosen.
+     */
+    public static NcnnSr.Opts exportMode(Context ctx) {
+        android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (sp.getLong("exportModeBuild", -1) == versionCode(ctx) && "vulkanFp16Storage".equals(sp.getString("exportMode", "")))
+            return NcnnSr.Opts.vulkanFp16Storage();
+        return NcnnSr.Opts.vulkanFp32();
+    }
+
+    public static String exportModeReason(Context ctx) {
+        android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return sp.getLong("exportModeBuild", -1) == versionCode(ctx) ? sp.getString("exportModeWhy", "") : "لم يُقرَّر لهذه النسخة بعد: Vulkan FP32";
+    }
+
+    /** Clean-run result of one mode's timing pair. */
+    static final class Timed {
+        NcnnSr.Opts mode;
+        long glslMedNs = -1, ncnnMedNs = -1;
+        int glslClean, ncnnClean;
+    }
+
+    static final int MIN_CLEAN = 3;
+
+    /**
+     * FP16 storage + FP32 arithmetic replaces FP32 as ncnn's experimental mode only if, in this build:
+     * it was accepted by the check (it was timed only because it was), both modes have at least
+     * MIN_CLEAN uninterrupted runs for each engine, and its clean median is below both Vulkan FP32's and
+     * GLSL's in its own pair. Otherwise FP32 stays. Stored per build.
+     */
+    private static void decide(Context ctx, StringBuilder r, java.util.List<Timed> timed) {
+        Timed f16 = null, f32 = null;
+        for (Timed t : timed) { if ("vulkanFp16Storage".equals(keyOf(t.mode))) f16 = t; else if ("vulkanFp32".equals(keyOf(t.mode))) f32 = t; }
+        String mode = "vulkanFp32", why;
+        if (f16 == null || f32 == null) why = "لم يُقس الوضعان معاً في هذا التشغيل: يبقى Vulkan FP32.";
+        else if (Math.min(Math.min(f16.glslClean, f16.ncnnClean), Math.min(f32.glslClean, f32.ncnnClean)) < MIN_CLEAN)
+            why = String.format(Locale.US, "تكرارات سليمة أقل من %d لأحد المحركين: غير حاسم، يبقى Vulkan FP32.", MIN_CLEAN);
+        else if (f16.ncnnMedNs < f32.ncnnMedNs && f16.ncnnMedNs < f16.glslMedNs) {
+            mode = "vulkanFp16Storage";
+            why = String.format(Locale.US, "تخزين FP16 مع حساب FP32: مقبول في فحص هذه النسخة، ووسيطه السليم %.2f ث أقل من Vulkan FP32 (%.2f ث) ومن GLSL في زوجه (%.2f ث).",
+                    f16.ncnnMedNs / 1e9, f32.ncnnMedNs / 1e9, f16.glslMedNs / 1e9);
+        } else why = String.format(Locale.US, "تخزين FP16 لم يكن أسرع من الاثنين (%.2f ث مقابل FP32 %.2f ث وGLSL %.2f ث): يبقى Vulkan FP32.",
+                f16.ncnnMedNs / 1e9, f32.ncnnMedNs / 1e9, f16.glslMedNs / 1e9);
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong("exportModeBuild", versionCode(ctx))
+                .putString("exportMode", mode).putString("exportModeWhy", why).apply();
+        r.append("\nوضع ncnn التجريبي للتصدير في هذه النسخة: ").append(optsOf(mode).label()).append(". ").append(why).append(" GLSL يبقى الافتراضي.\n");
     }
 
     private static String keyOf(NcnnSr.Opts o) {
@@ -173,7 +225,7 @@ public final class AiEngineCompare {
      * Waits (at most COOL_WAIT_S) until the thermal status is below MODERATE, so throttling does not bias
      * the timing. Reports the status at start and end and the time waited. Returns false if still hot.
      */
-    private static boolean waitCool(PowerManager pm, StringBuilder r, Progress progress, String label) {
+    public static boolean waitCool(PowerManager pm, StringBuilder r, Progress progress, String label) {
         if (pm == null) return true;
         String start = thermal(pm);
         long t0 = System.currentTimeMillis();
@@ -189,7 +241,7 @@ public final class AiEngineCompare {
         }
         long waited = (System.currentTimeMillis() - t0) / 1000;
         r.append(String.format(Locale.US, "%s: الحرارة عند البدء %s%s · عند القياس %s\n", label, start,
-                waited > 0 ? String.format(Locale.US, " · انتظار تبريد %d ث", waited) : "", thermal(pm)));
+                waited > 0 ? String.format(Locale.US, " · انتظار تبريد %d ث (خارج زمن المعالجة)", waited) : " · بلا انتظار", thermal(pm)));
         return true;
     }
 
@@ -240,20 +292,32 @@ public final class AiEngineCompare {
                 return;
             }
             float[] img = pattern(5, inW, inH);
-            for (NcnnSr.Opts o : modes) {
-                if (!waitCool(pm, r, progress, o.label())) continue;
+            // FP16 storage first, then FP32 (2.3.6 ran them the other way round)
+            java.util.List<NcnnSr.Opts> order = new java.util.ArrayList<>();
+            for (NcnnSr.Opts o : modes) if (o.fp16Storage) order.add(o);
+            for (NcnnSr.Opts o : modes) if (!o.fp16Storage) order.add(o);
+            r.append("الترتيب:");
+            for (NcnnSr.Opts o : order) r.append(' ').append(o.label()).append(';');
+            r.append(" داخل كل وضع: GLSL ثم ncnn متناوبان في كل تكرار.\n");
+            java.util.List<Timed> timed = new java.util.ArrayList<>();
+            for (NcnnSr.Opts o : order) {
+                if (!waitCool(pm, r, progress, o.label())) continue;   // waiting is reported separately, never inside a timed run
                 step(progress, "زمن " + o.label());
                 NcnnSr net = NcnnSr.open(ctx.getAssets(), o);
                 try {
                     if (!net.loaded) { r.append(o.label()).append(": غير متاح: ").append(net.reason).append('\n'); continue; }
                     r.append("قبل ").append(o.label()).append(": ").append(MemoryBudget.JavaHeap.current().describe()).append(memLine(ram(ctx)))
                             .append(String.format(Locale.US, " · مخازن ncnn الأصلية %d MB", NcnnSr.bufferBytes(inW, inH, tile) >> 20)).append('\n');
-                    r.append(timeBoth(kit, glsl, net, img, inW, inH, tile, pm));
+                    Timed t = new Timed();
+                    t.mode = o;
+                    r.append(timeBoth(ctx, kit, glsl, net, img, inW, inH, tile, pm, t));
+                    timed.add(t);
                 } finally {
                     net.close();
                 }
             }
             r.append("بعد القياس: ").append(MemoryBudget.JavaHeap.current().describe()).append(memLine(ram(ctx))).append('\n');
+            decide(ctx, r, timed);
             r.append("4K لا يُشغَّل من هذا الزر. أقصى نسيج GL ").append(GlKit.getInt(GLES20.GL_MAX_TEXTURE_SIZE)).append('\n');
         } catch (Throwable t) {
             r.append("توقف قياس الأداء:\n").append(chain(t)).append(MemoryBudget.JavaHeap.current().describe()).append('\n');
@@ -297,7 +361,13 @@ public final class AiEngineCompare {
         return b.toString();
     }
 
-    private static String timeBoth(GlKit kit, SrEngine glsl, NcnnSr ncnn, float[] rgb, int w, int h, int tile, PowerManager pm) {
+    /**
+     * WARMUP, then REPS repetitions; each repetition times GLSL, then ncnn. For every timed run: wall-clock
+     * start and end, thermal status, and whether the app stayed in the foreground with the screen on
+     * (RunMonitor). An interrupted run is listed with its reason and left out of the clean median, not
+     * dropped from the table. Medians over clean runs; all five times are printed.
+     */
+    private static String timeBoth(Context ctx, GlKit kit, SrEngine glsl, NcnnSr ncnn, float[] rgb, int w, int h, int tile, PowerManager pm, Timed out) {
         String t0Thermal = thermal(pm);
         Tex in, outG, outN;
         {
@@ -307,39 +377,72 @@ public final class AiEngineCompare {
         }
         outG = kit.tex(w * 4, h * 4, true);
         outN = kit.tex(w * 4, h * 4, true);
-        long[] g = new long[REPS];
-        long[][] n = new long[3][REPS];            // total, GL read, tiled run (includes the per-tile GL uploads)
-        long[][] in2 = new long[5][REPS];          // gather, CPU pack, extract, shuffle (core), GL upload of cores
+        long[] g = new long[REPS], n = new long[REPS];
+        long[][] ph = new long[8][REPS];   // read, tiled, gather, pack, extract, shuffle, upload
+        String[] gInt = new String[REPS], nInt = new String[REPS];
+        StringBuilder rows = new StringBuilder();
         boolean fullVk = true;
         String check;
         try {
             for (int i = 0; i < WARMUP; i++) { glslOnce(kit, glsl, in, outG, tile); ncnnOnce(kit, ncnn, in, outN, w, h, tile, null); }
             for (int i = 0; i < REPS; i++) {
+                String thA = thermalName(pm.getCurrentThermalStatus());
+                com.mojahed.hdrstudio.core.RunMonitor.State a = com.mojahed.hdrstudio.core.RunMonitor.now(ctx);
                 g[i] = glslOnce(kit, glsl, in, outG, tile);
-                long[] ph = new long[3];
-                NcnnSr.Forward f = ncnnOnce(kit, ncnn, in, outN, w, h, tile, ph);
-                for (int k = 0; k < 3; k++) n[k][i] = ph[k];
-                in2[0][i] = f.tileCopyNs; in2[1][i] = f.packNs; in2[2][i] = f.extractNs; in2[3][i] = f.shuffleNs; in2[4][i] = f.mergeNs;
+                com.mojahed.hdrstudio.core.RunMonitor.State b = com.mojahed.hdrstudio.core.RunMonitor.now(ctx);
+                gInt[i] = com.mojahed.hdrstudio.core.RunMonitor.interruption(a, b);
+                long[] p = new long[3];
+                NcnnSr.Forward f = ncnnOnce(kit, ncnn, in, outN, w, h, tile, p);
+                com.mojahed.hdrstudio.core.RunMonitor.State c = com.mojahed.hdrstudio.core.RunMonitor.now(ctx);
+                nInt[i] = com.mojahed.hdrstudio.core.RunMonitor.interruption(b, c);
+                n[i] = p[0];
+                ph[0][i] = p[1]; ph[1][i] = p[2]; ph[2][i] = f.tileCopyNs; ph[3][i] = f.packNs; ph[4][i] = f.extractNs; ph[5][i] = f.shuffleNs; ph[6][i] = f.mergeNs;
                 fullVk &= f.fullVulkan;
+                String thC = thermalName(pm.getCurrentThermalStatus());
+                rows.append(String.format(Locale.US, "    تكرار %d: GLSL %s ث [%s–%s] %s · ncnn %s ث [%s–%s] %s · حرارة %s→%s\n", i + 1,
+                        sec(g[i]), com.mojahed.hdrstudio.core.RunMonitor.clock(a.ms), com.mojahed.hdrstudio.core.RunMonitor.clock(b.ms), gInt[i] == null ? "سليم" : "منقطع: " + gInt[i],
+                        sec(n[i]), com.mojahed.hdrstudio.core.RunMonitor.clock(b.ms), com.mojahed.hdrstudio.core.RunMonitor.clock(c.ms), nInt[i] == null ? "سليم" : "منقطع: " + nInt[i],
+                        thA, thC));
             }
             check = placementCheck(kit, outG, outN, w, h, tile);
         } finally {
             kit.delete(in); kit.delete(outG); kit.delete(outN);
         }
-        String t1Thermal = thermal(pm);
+        long[] gc = clean(g, gInt), nc = clean(n, nInt);
+        out.glslClean = gc.length; out.ncnnClean = nc.length;
+        out.glslMedNs = gc.length > 0 ? med(gc) : -1; out.ncnnMedNs = nc.length > 0 ? med(nc) : -1;
         StringBuilder s = new StringBuilder();
-        s.append(String.format(Locale.US, "%s · حرارة قبل %s · بعد %s%s\n", ncnn.opts.label(), t0Thermal, t1Thermal, fullVk ? "" : " · ليس Vulkan بالكامل"));
+        s.append(String.format(Locale.US, "%s · حرارة قبل %s · بعد %s%s\n", ncnn.opts.label(), t0Thermal, thermal(pm), fullVk ? "" : " · ليس Vulkan بالكامل"));
         s.append("  الإعدادات الفعلية: ").append(ncnn.options).append('\n');
-        s.append(String.format(Locale.US, "  GLSL نسيج→نسيج: وسيط %s · أدنى %s · أعلى %s ms\n", ms(med(g)), ms(min(g)), ms(max(g))));
-        s.append(String.format(Locale.US, "  ncnn نسيج→نسيج: وسيط %s · أدنى %s · أعلى %s ms\n", ms(med(n[0])), ms(min(n[0])), ms(max(n[0]))));
+        s.append(rows);
+        s.append(String.format(Locale.US, "  GLSL: الأزمنة %s · وسيط السليمة %s ث (%d/%d سليمة) · وسيط الكل %s ث\n", list(g), out.glslMedNs < 0 ? "—" : sec(out.glslMedNs), gc.length, REPS, sec(med(g))));
+        s.append(String.format(Locale.US, "  ncnn: الأزمنة %s · وسيط السليمة %s ث (%d/%d سليمة) · وسيط الكل %s ث\n", list(n), out.ncnnMedNs < 0 ? "—" : sec(out.ncnnMedNs), nc.length, REPS, sec(med(n))));
         s.append(String.format(Locale.US,
-                "    وسيط المراحل: قراءة GL %s · المقسّم %s (جمع النوافذ %s · تعبئة CPU %s · extract شاملاً النقل والمزامنة %s · PixelShuffle+المتبقي للقلب %s · رفع القلوب إلى GL %s) ms\n",
-                ms(med(n[1])), ms(med(n[2])), ms(med(in2[0])), ms(med(in2[1])), ms(med(in2[2])), ms(med(in2[3])), ms(med(in2[4]))));
+                "    وسيط مراحل ncnn: قراءة GL %s · المقسّم %s (جمع النوافذ %s · تعبئة CPU %s · extract شاملاً النقل والمزامنة %s · PixelShuffle+المتبقي للقلب %s · رفع القلوب إلى GL %s) ms\n",
+                ms(med(ph[0])), ms(med(ph[1])), ms(med(ph[2])), ms(med(ph[3])), ms(med(ph[4])), ms(med(ph[5])), ms(med(ph[6]))));
         s.append("  ").append(check).append('\n');
-        double ratio = (double) med(n[0]) / Math.max(1, med(g));
-        s.append(String.format(Locale.US, "  النسبة ncnn/GLSL (وسيط): %.2f× — %s\n", ratio,
-                ratio < 1 ? "ncnn أقصر زمناً في هذا القياس" : "GLSL أقصر زمناً في هذا القياس"));
+        if (out.glslMedNs > 0 && out.ncnnMedNs > 0) {
+            double ratio = (double) out.ncnnMedNs / out.glslMedNs;
+            s.append(String.format(Locale.US, "  النسبة ncnn/GLSL (وسيط السليمة): %.2f× — %s\n", ratio,
+                    ratio < 1 ? "ncnn أقصر زمناً في هذا القياس" : "GLSL أقصر زمناً في هذا القياس"));
+        } else s.append("  لا نسبة: لا تكرارات سليمة كافية لأحد المحركين.\n");
         return s.toString();
+    }
+
+    private static long[] clean(long[] v, String[] why) {
+        int k = 0;
+        for (String w : why) if (w == null) k++;
+        long[] o = new long[k];
+        for (int i = 0, j = 0; i < v.length; i++) if (why[i] == null) o[j++] = v[i];
+        return o;
+    }
+
+    private static String sec(long ns) { return String.format(Locale.US, "%.2f", ns / 1e9); }
+
+    private static String list(long[] v) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < v.length; i++) b.append(i == 0 ? "" : ", ").append(sec(v[i]));
+        return b.toString();
     }
 
     /**

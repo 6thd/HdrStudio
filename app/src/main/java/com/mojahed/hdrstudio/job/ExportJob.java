@@ -62,6 +62,20 @@ public final class ExportJob implements Runnable {
 
     public ExportJob(Context ctx, ExportRequest req) { this.ctx = ctx.getApplicationContext(); this.req = req; }
 
+    // ---- read after run() by the A/B test
+    /** Wall time of run(), from start to the verified file. */
+    public long wallMs;
+    /** Time of each written frame in the render loop (decode + pipeline + present), and its AI part. */
+    public final java.util.List<Long> frameMs = new java.util.ArrayList<>(), aiMs = new java.util.ArrayList<>();
+    public long videoSamples, audioSamples;
+    public String outputName;
+    public int abTile;
+    public String engine() { return req.params.ai ? (req.params.aiNcnn ? "ncnn" : "GLSL") : "بلا AI"; }
+    public String outputUri() { return snap.outputUri; }
+    public JobManager.State state() { return snap.state; }
+    public String error() { return snap.error; }
+    public String report() { return snap.result; }
+
     public void cancel() { cancel.set(true); }
 
     // ------------------------------------------------------------------ progress
@@ -206,6 +220,7 @@ public final class ExportJob implements Runnable {
     // ------------------------------------------------------------------ run
     @Override
     public void run() {
+        long runStart = System.currentTimeMillis();
         snap.state = JobManager.State.RUNNING;
         stage("التحضير");
         Uri pendingUri = null;
@@ -226,9 +241,9 @@ public final class ExportJob implements Runnable {
             DeviceCaps caps = DeviceCaps.collect(ctx);
             plan(caps);
             SourceInfo s = req.src;
-            long start = req.startUs, end = req.preview ? req.endUs : Long.MAX_VALUE;
-            long durUs = req.preview ? Math.min(end, s.lastPtsUs) - start : s.durationUs;
-            int total = req.preview ? (int) Math.max(1, Math.round(durUs / 1e6 * s.avgFps)) : s.frameCount;
+            long start = req.startUs, end = req.bounded() ? req.endUs : Long.MAX_VALUE;
+            long durUs = req.bounded() ? Math.min(end, s.lastPtsUs) - start : s.durationUs;
+            int total = req.bounded() ? (int) Math.max(1, Math.round(durUs / 1e6 * s.avgFps)) : s.frameCount;
             checkSpace(durUs);
             PipelineParams p = req.params;
             boolean yuvPath = s.isHdr() || s.bitDepth > 8;
@@ -240,26 +255,40 @@ public final class ExportJob implements Runnable {
             if (!mem.fits)
                 throw new IllegalStateException("لا تتسع الذاكرة لهذه الإعدادات: " + mem.reason + ". أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
             final PowerManager pmFinal = pm;
+            if (p.ai && req.abTag != null) {
+                // A/B: both engines run the same tile. The first job takes the smaller of both engines' plans;
+                // the second must be able to run exactly that tile.
+                int common = req.tileOverride;
+                if (common <= 0) {
+                    MemoryBudget.Plan other = MemoryBudget.plan(s.width, s.height, yuvPath, outW, outH, hdrOut,
+                            p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal, !p.aiNcnn,
+                            !p.aiNcnn ? MemoryBudget.JavaHeap.current() : MemoryBudget.JavaHeap.UNLIMITED);
+                    common = Math.min(mem.tile, other.tile);
+                }
+                if (common > mem.tile) throw new IllegalStateException("بلاطة A/B المشتركة " + common + " لا تتسع لهذا المحرك (يسمح بـ " + mem.tile + ").");
+                abTile = common;
+                report.append("A/B: بلاطة مشتركة للمحركين T=").append(common).append('\n');
+            }
 
             egl = new Egl(hdrOut);
             egl.makeCurrentOffscreen();
             kit = new GlKit(new ShaderLoader(ctx.getAssets()));
             if (p.ai && p.aiNcnn) {
                 stage("تحميل نموذج AI على ncnn/Vulkan");
-                ncnn = NcnnSr.openForExport(ctx.getAssets());
+                ncnn = NcnnSr.openForExport(ctx);
                 if (!ncnn.loaded || !ncnn.fullVulkan) {
                     String why = ncnn.reason;
                     ncnn.close();
                     ncnn = null;
                     throw new IllegalStateException("ncnn/Vulkan غير متاح: " + why + "\nاختر محرك GLSL.");
                 }
-                p.aiTile = mem.tile;
+                p.aiTile = abTile > 0 ? abTile : mem.tile;
                 report.append(ncnn.summary()).append(" · بلاطة ").append(p.aiTile).append('\n');
             } else if (p.ai) {
                 stage("تحميل نموذج AI وفحصه");
                 sr = new SrEngine(kit, ctx.getAssets());
                 if (!sr.selfTest(ctx.getAssets())) throw new IllegalStateException("AI " + sr.status);
-                p.aiTile = mem.tile;
+                p.aiTile = abTile > 0 ? abTile : mem.tile;
                 report.append("AI: ").append(sr.status).append(" · حجم البلاطة ").append(p.aiTile).append('\n');
             }
             HdrMetadata meta = null;
@@ -296,7 +325,9 @@ public final class ExportJob implements Runnable {
             }
             // ---------------- output target
             stage(passes == 2 ? "المرحلة 2/2: المعالجة والترميز" : "المعالجة والترميز");
-            String name = "HDRStudio_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new java.util.Date()) + ".mp4";
+            String name = "HDRStudio_" + (req.abTag != null ? "AB_" : "") + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new java.util.Date())
+                    + (req.abTag != null ? "_" + req.abTag : "") + ".mp4";
+            outputName = name;
             if (req.preview) {
                 cacheOut = new File(ctx.getCacheDir(), "preview_clip.mp4");
                 cacheOut.delete();
@@ -312,7 +343,7 @@ public final class ExportJob implements Runnable {
                 pfd = ctx.getContentResolver().openFileDescriptor(pendingUri, "rw");
             }
             mux = new MuxerSink(pfd.getFileDescriptor(), s.rotation);
-            long offsetUs = req.preview ? Math.max(0, req.startUs) : 0;
+            long offsetUs = req.bounded() ? Math.max(0, req.startUs) : 0;
             if (s.audioTrack >= 0 && req.keepAudio) {
                 stage("تجهيز الصوت");
                 audio = AudioTrackSource.open(ctx, req.uri, s.audioTrack, ctx.getCacheDir(), start, end, offsetUs, cancel);
@@ -357,6 +388,8 @@ public final class ExportJob implements Runnable {
                 kit.runToSurface("present.frag", u, outW, outH);
                 egl.swap(ws.surface, (fs.ptsUs - offsetUs) * 1000L);
                 ve.checkError();
+                frameMs.add((System.nanoTime() - t0) / 1_000_000L);
+                if (p.ai) aiMs.add(pipe.info.aiMs);
                 n++;
                 thermal(pm);
                 frameTick(t0, n, total, passes - 1, passes);
@@ -367,6 +400,7 @@ public final class ExportJob implements Runnable {
             if (audio != null) audio.pumpUntil(mux, Long.MAX_VALUE);
             if (!mux.stop()) throw new IllegalStateException("لم يُكتب أي إطار (المرمّز لم يبدأ)");
             report.append(String.format(Locale.US, "مكتوب: %d إطار فيديو · %d عينة صوت · %.1f MB\n", mux.videoSamples, mux.audioSamples, mux.bytes / 1e6));
+            videoSamples = mux.videoSamples; audioSamples = mux.audioSamples;
             if (hdrOut) {
                 report.append(meta.describe()).append('\n');
                 if (passes == 1 && n > 0)
@@ -395,6 +429,7 @@ public final class ExportJob implements Runnable {
             } else {
                 snap.outputPath = cacheOut.getAbsolutePath();
             }
+            wallMs = System.currentTimeMillis() - runStart;
             snap.result = report.toString().trim();
             snap.state = JobManager.State.DONE;
             snap.fraction = 1;

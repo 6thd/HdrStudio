@@ -6,3 +6,4 @@ local.properties
 *.keystore
 tools/harness/node_modules/
 tools/harness/package*.json
+app/src/main/assets/build_info.txt

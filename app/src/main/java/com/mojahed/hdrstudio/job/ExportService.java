@@ -37,13 +37,14 @@ public final class ExportService extends Service {
         int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         startForeground(ID, build("بدء التصدير", "", 0), type);
         if (worker != null && worker.isAlive()) return START_NOT_STICKY;
-        final ExportRequest req = JobManager.get().takePending();
-        if (req == null) { stopSelf(); return START_NOT_STICKY; }
+        final AbExport ab = JobManager.get().takePendingAb();
+        final ExportRequest req = ab == null ? JobManager.get().takePending() : null;
+        if (req == null && ab == null) { stopSelf(); return START_NOT_STICKY; }
         PowerManager pm = getSystemService(PowerManager.class);
         wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hdrstudio:export");
         wl.acquire(6 * 60 * 60 * 1000L);
-        final ExportJob job = new ExportJob(this, req);
-        JobManager.get().attach(job);
+        final ExportJob job = req == null ? null : new ExportJob(this, req);
+        if (job != null) JobManager.get().attach(job);
         listener = new JobManager.Listener() {
             @Override public void onUpdate(JobManager.Snapshot s) {
                 if (s.state == JobManager.State.RUNNING) {
@@ -55,7 +56,7 @@ public final class ExportService extends Service {
         JobManager.get().addListener(listener);
         worker = new Thread(new Runnable() {
             @Override public void run() {
-                try { job.run(); } finally { finish(); }
+                try { if (job != null) job.run(); else ab.run(ExportService.this); } finally { finish(); }
             }
         }, "export-gl");
         worker.setPriority(Thread.NORM_PRIORITY);

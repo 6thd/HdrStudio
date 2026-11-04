@@ -19,4 +19,11 @@ public final class ExportRequest {
     public boolean preview;               // short clip into the app cache, not the gallery
     public long startUs, endUs = Long.MAX_VALUE;
     public EncodeSelfTest.Result selfTest; // must be usable for HDR export
+    /** A/B export test: the engine tag ("GLSL" / "ncnn"); bounded like a preview, saved to the gallery under that tag. */
+    public String abTag;
+    /** A/B: the AI tile both engines use (0 = this job computes the common tile of both engines' memory plans). */
+    public int tileOverride;
+
+    /** Only [startUs, endUs] is exported. */
+    public boolean bounded() { return preview || abTag != null; }
 }

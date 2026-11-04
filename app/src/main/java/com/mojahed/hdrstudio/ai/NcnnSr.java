@@ -34,7 +34,7 @@ public final class NcnnSr {
     /**
      * Net options. Each precision mode is accepted on its own by the phone check; the native side
      * refuses a mode whose effective precision ncnn would change, so there is no silent fallback.
-     * exportMode() is Vulkan FP32: the only Vulkan mode that passed the tiled check on the phone (2.3.3).
+     * The experimental export mode is decided per build by AiEngineCompare.exportMode (Vulkan FP32 until then).
      */
     public static final class Opts {
         // must match the enum in ncnn_sr.cpp
@@ -51,7 +51,6 @@ public final class NcnnSr {
         public static Opts vulkanFp16Storage() { return new Opts(true, true, false, true, true, false); }
         /** FP16 storage and arithmetic (failed the phone check in 2.3.3; not used by export). */
         public static Opts vulkanFp16() { return new Opts(true, true, true, true, true, false); }
-        public static Opts exportMode() { return vulkanFp32(); }
         int flags() {
             int f = 0;
             if (vulkan) f |= F_VULKAN;
@@ -97,8 +96,8 @@ public final class NcnnSr {
         this.loadMs = loadMs;
     }
 
-    /** The mode export and preview use. */
-    public static NcnnSr openForExport(AssetManager am) { return open(am, Opts.exportMode()); }
+    /** The mode export and preview use: this build's decision (AiEngineCompare.exportMode), Vulkan FP32 until decided. */
+    public static NcnnSr openForExport(android.content.Context ctx) { return open(ctx.getAssets(), AiEngineCompare.exportMode(ctx)); }
 
     public static NcnnSr open(AssetManager am, Opts o) {
         long t0 = System.nanoTime();

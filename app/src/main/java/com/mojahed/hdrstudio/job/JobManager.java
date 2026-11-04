@@ -21,6 +21,8 @@ public final class JobManager {
         public double fps, etaSec = -1, msPerFrame;
         public String outputUri, outputPath;
         public String thermal = "";
+        /** The A/B test's final report (its two exports publish ordinary snapshots before it). */
+        public boolean abFinal;
     }
 
     public interface Listener { void onUpdate(Snapshot s); }
@@ -37,7 +39,12 @@ public final class JobManager {
     public synchronized Snapshot snapshot() { return snap; }
     public synchronized boolean busy() { return snap.state == State.RUNNING; }
 
+    private AbExport pendingAb;
+
     public synchronized void setPending(ExportRequest r) { pending = r; }
+    /** A/B export test: run by ExportService instead of a single export. */
+    public synchronized void setPendingAb(AbExport ab) { pendingAb = ab; }
+    public synchronized AbExport takePendingAb() { AbExport a = pendingAb; pendingAb = null; return a; }
     public synchronized ExportRequest takePending() { ExportRequest r = pending; pending = null; return r; }
     public synchronized void attach(ExportJob j) { job = j; }
 
