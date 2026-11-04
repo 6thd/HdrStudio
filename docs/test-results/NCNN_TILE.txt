@@ -1,0 +1,52 @@
+HDR Studio 2.3.3 — ncnn tiled path vs direct, desktop (not Maleoon 935F)
+date: 2026-11-04
+
+1) tools/ncnn/tile_check.py — pip ncnn 1.0.20261020 on x86-64 CPU, winograd+sgemm on (production options).
+   OLD = 2.3.1/2.3.2 tiling (black margin, crop at fixed P). NEW = TilePlan. Regions: corner/edge within 2 LR px of the border, seam within 2 px of an interior tile boundary, centre the rest.
+   x86 ncnn ignores the FP16 flags on CPU; the 'CPU FP16' block is FP32 arithmetic. Real FP16 is Vulkan on the phone.
+   Limits unchanged: maxAbs <= 0.02 and PSNR >= 40 dB per region.
+
+CPU FP32 16x12
+  direct vs NumPy reference          all maxAbs 0.000001 PSNR 132.09 | corner 0.000001/133.3 n=256 | edge 0.000001/132.3 n=1280 | seam - | centre 0.000001/131.8 n=1536  PASS
+  OLD tiled T=64 (1 tiles) vs direct all maxAbs 0.666463 PSNR  20.76 | corner 0.666463/16.7 n=256 | edge 0.644717/18.5 n=1280 | seam - | centre 0.195900/28.7 n=1536  FAIL
+  NEW tiled T=64 (1 tiles) vs direct all maxAbs 0.000000 PSNR  99.00 | corner 0.000000/99.0 n=256 | edge 0.000000/99.0 n=1280 | seam - | centre 0.000000/99.0 n=1536  PASS
+  OLD tiled T=8 (4 tiles) vs direct  all maxAbs 0.666463 PSNR  20.76 | corner 0.666463/16.7 n=256 | edge 0.644717/18.5 n=1280 | seam 0.195900/28.8 n=1024 | centre 0.115342/28.6 n=512  FAIL
+  NEW tiled T=8 (4 tiles) vs direct  all maxAbs 0.000000 PSNR  99.00 | corner 0.000000/99.0 n=256 | edge 0.000000/99.0 n=1280 | seam 0.000000/99.0 n=1024 | centre 0.000000/99.0 n=512  PASS
+CPU FP32 157x113
+  OLD tiled T=64 (6 tiles) vs direct all maxAbs 0.709342 PSNR  29.08 | corner 0.630975/16.0 n=256 | edge 0.709342/17.5 n=16768 | seam 0.267392/39.9 n=23232 | centre 0.237058/37.7 n=243600  FAIL
+  NEW tiled T=64 (6 tiles) vs direct all maxAbs 0.000003 PSNR 131.86 | corner 0.000002/127.4 n=256 | edge 0.000003/131.0 n=16768 | seam 0.000003/130.5 n=23232 | centre 0.000003/132.1 n=243600  PASS
+  OLD tiled T=32 (20 tiles) vs direct all maxAbs 0.709342 PSNR  29.08 | corner 0.630975/16.0 n=256 | edge 0.709342/17.5 n=16768 | seam 0.267392/39.0 n=54208 | centre 0.237058/37.7 n=212624  FAIL
+  NEW tiled T=32 (20 tiles) vs direct all maxAbs 0.000003 PSNR 130.72 | corner 0.000002/127.5 n=256 | edge 0.000003/131.0 n=16768 | seam 0.000003/130.5 n=54208 | centre 0.000003/130.8 n=212624  PASS
+  OLD tiled T=16 (80 tiles) vs direct all maxAbs 0.709342 PSNR  29.08 | corner 0.630976/16.0 n=256 | edge 0.709342/17.5 n=16768 | seam 0.267392/38.4 n=109584 | centre 0.229812/37.6 n=157248  FAIL
+  NEW tiled T=16 (80 tiles) vs direct all maxAbs 0.000004 PSNR 130.83 | corner 0.000002/127.5 n=256 | edge 0.000003/131.2 n=16768 | seam 0.000004/130.8 n=109584 | centre 0.000003/130.9 n=157248  PASS
+CPU FP16 16x12
+  direct vs NumPy reference          all maxAbs 0.000001 PSNR 132.09 | corner 0.000001/133.3 n=256 | edge 0.000001/132.3 n=1280 | seam - | centre 0.000001/131.8 n=1536  PASS
+  NEW tiled T=64 (1 tiles) vs direct all maxAbs 0.000000 PSNR  99.00 | corner 0.000000/99.0 n=256 | edge 0.000000/99.0 n=1280 | seam - | centre 0.000000/99.0 n=1536  PASS
+  NEW tiled T=8 (4 tiles) vs direct  all maxAbs 0.000000 PSNR  99.00 | corner 0.000000/99.0 n=256 | edge 0.000000/99.0 n=1280 | seam 0.000000/99.0 n=1024 | centre 0.000000/99.0 n=512  PASS
+CPU FP16 157x113
+  NEW tiled T=64 (6 tiles) vs direct all maxAbs 0.000003 PSNR 131.86 | corner 0.000002/127.4 n=256 | edge 0.000003/131.0 n=16768 | seam 0.000003/130.5 n=23232 | centre 0.000003/132.1 n=243600  PASS
+  NEW tiled T=32 (20 tiles) vs direct all maxAbs 0.000003 PSNR 130.72 | corner 0.000002/127.5 n=256 | edge 0.000003/131.0 n=16768 | seam 0.000003/130.5 n=54208 | centre 0.000003/130.8 n=212624  PASS
+  NEW tiled T=16 (80 tiles) vs direct all maxAbs 0.000004 PSNR 130.83 | corner 0.000002/127.5 n=256 | edge 0.000003/131.2 n=16768 | seam 0.000004/130.8 n=109584 | centre 0.000003/130.9 n=157248  PASS
+RESULT PASS
+
+2) tools/jvmtests TileTests — TilePlan.run (the code NcnnSr.forward and export call) with a 34-layer SRVGG-shaped network, 4 channels, per-layer zero padding, bias, PReLU, PixelShuffle(4), clamped residual.
+PASS tile_plan_geometry  5719 size/tile combinations
+PASS tile_plan_rejects_context_below_receptive_radius  context 33 < 34
+PASS tiled_equals_direct_16x12_T64  1 tiles, window <= 16x12, maxAbs 0.00 (black-margin tiling: 0.306)
+PASS black_margin_tiling_detected_16x12_T64  maxAbs 0.306
+PASS tiled_equals_direct_16x12_T8  4 tiles, window <= 16x12, maxAbs 0.00 (black-margin tiling: 0.306)
+PASS black_margin_tiling_detected_16x12_T8  maxAbs 0.306
+PASS tiled_equals_direct_157x113_T64  6 tiles, window <= 136x113, maxAbs 0.00 (black-margin tiling: 0.306)
+PASS black_margin_tiling_detected_157x113_T64  maxAbs 0.306
+PASS tiled_equals_direct_157x113_T32  20 tiles, window <= 104x104, maxAbs 0.00 (black-margin tiling: 0.306)
+PASS black_margin_tiling_detected_157x113_T32  maxAbs 0.306
+PASS tiled_equals_direct_157x113_T16  80 tiles, window <= 88x88, maxAbs 0.00 (black-margin tiling: 0.306)
+PASS black_margin_tiling_detected_157x113_T16  maxAbs 0.306
+PASS tiled_equals_direct_113x157_T24  35 tiles, window <= 96x96, maxAbs 0.00 (black-margin tiling: 0.306)
+PASS black_margin_tiling_detected_113x157_T24  maxAbs 0.306
+TILE SUMMARY fails=0
+
+JVM SUMMARY pass=136 fail=0 missing=0 exit=0
+(this machine's android.jar has no method bodies; org.json 20240303 built from github.com/stleary/JSON-java was added to a local copy for NotesTests only)
+
+3) Phone: not run yet. Vulkan FP32/FP16 results only come from 2.3.3-test on the phone.

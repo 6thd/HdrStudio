@@ -6,6 +6,7 @@
 #include <jni.h>
 #include <net.h>
 #include <gpu.h>
+#include <cpu.h>
 #include "srvgg_ncnn_model.h"
 #include <chrono>
 #include <cstdint>
@@ -25,6 +26,7 @@ struct NetHolder {
     std::vector<unsigned char> model;
     ncnn::Net net;
     bool fp16 = false;
+    bool vulkan = true;
     bool full_vulkan = false;
     int gpu_index = -1;
 };
@@ -90,8 +92,12 @@ JNIEXPORT jstring JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeDevice(JNIE
     return e->NewStringUTF(g_device.c_str());
 }
 
-JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(JNIEnv* e, jclass, jbyteArray model, jboolean fp16) {
-    if (!ensure_gpu()) return 0;
+JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(
+        JNIEnv* e, jclass, jbyteArray model, jboolean vulkan, jboolean fp16, jboolean winograd, jboolean sgemm, jboolean packing) {
+    // vulkan=false is the CPU FP32 comparison baseline. Export only opens vulkan=true.
+    const bool use_vk = vulkan == JNI_TRUE;
+    if (use_vk && !ensure_gpu()) return 0;
+    g_err.clear();
     jbyte* bytes = e->GetByteArrayElements(model, nullptr);
     jsize n = e->GetArrayLength(model);
     if (n != 4853184) { set_err("model blob size " + std::to_string(n) + " != 4853184"); e->ReleaseByteArrayElements(model, bytes, JNI_ABORT); return 0; }
@@ -102,21 +108,24 @@ JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(JNIEnv
     std::string berr;
     if (!srvgg_build_ncnn_bin(weights.data(), weights.size(), h->model, berr)) { set_err(berr); delete h; return 0; }
     h->fp16 = fp16 == JNI_TRUE;
-    h->gpu_index = 0;
-    ncnn::VulkanDevice* vk = ncnn::get_gpu_device(0);
+    h->vulkan = use_vk;
+    h->gpu_index = use_vk ? 0 : -1;
     ncnn::Option opt;
-    opt.use_vulkan_compute = true;
+    opt.use_vulkan_compute = use_vk;
     opt.use_fp16_packed = false;
     opt.use_fp16_storage = h->fp16;
     opt.use_fp16_arithmetic = h->fp16;
-    opt.use_packing_layout = false;
+    opt.use_bf16_storage = false;
+    opt.use_packing_layout = packing == JNI_TRUE;
+    opt.use_winograd_convolution = winograd == JNI_TRUE;
+    opt.use_sgemm_convolution = sgemm == JNI_TRUE;
     opt.use_int8_inference = false;
     opt.use_int8_packed = false;
     opt.use_int8_storage = false;
     opt.use_int8_arithmetic = false;
-    opt.num_threads = 1;
+    opt.num_threads = use_vk ? 1 : ncnn::get_big_cpu_count();
     h->net.opt = opt;
-    h->net.set_vulkan_device(vk);
+    if (use_vk) h->net.set_vulkan_device(ncnn::get_gpu_device(0));
     std::string param = srvgg_ncnn_param();
     if (h->net.load_param_mem(param.c_str()) != 0) { set_err("load_param_mem failed"); delete h; return 0; }
     // References h->model. The vector is a member and outlives the Net.
@@ -126,15 +135,17 @@ JNIEXPORT jlong JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeCreate(JNIEnv
         delete h;
         return 0;
     }
-    h->full_vulkan = true;
-    for (size_t i = 0; i < h->net.layers().size(); i++) {
-        const ncnn::Layer* layer = h->net.layers()[i];
-        if (layer->type != "Input" && !layer->support_vulkan) {
-            h->full_vulkan = false;
-            set_err(std::string("CPU fallback layer ") + layer->name + " type=" + layer->type);
+    h->full_vulkan = use_vk;
+    if (use_vk) {
+        for (size_t i = 0; i < h->net.layers().size(); i++) {
+            const ncnn::Layer* layer = h->net.layers()[i];
+            if (layer->type != "Input" && !layer->support_vulkan) {
+                h->full_vulkan = false;
+                set_err(std::string("CPU fallback layer ") + layer->name + " type=" + layer->type);
+            }
         }
     }
-    LOGI("net ready fp16=%d full_vulkan=%d", h->fp16 ? 1 : 0, h->full_vulkan ? 1 : 0);
+    LOGI("net ready vulkan=%d fp16=%d full_vulkan=%d threads=%d", use_vk ? 1 : 0, h->fp16 ? 1 : 0, h->full_vulkan ? 1 : 0, opt.num_threads);
     return reinterpret_cast<jlong>(h);
 }
 
@@ -173,7 +184,12 @@ JNIEXPORT jint JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeForward(
     ex.set_light_mode(true);
     if (ex.input("data", input) != 0) { set_err("extractor.input failed"); e->ReleaseFloatArrayElements(inArr, in, JNI_ABORT); e->ReleaseFloatArrayElements(outArr, out, 0); return -3; }
     ncnn::Mat conv;
-    int er = ex.extract("c33", conv);
+    int er = ex.extract("c33", conv);  // type 0: cast to FP32 and unpack to elempack 1
+    if (er == 0 && conv.elempack != 1) {
+        ncnn::Mat unpacked;
+        ncnn::convert_packing(conv, unpacked, 1, h->net.opt);
+        conv = unpacked;
+    }
     auto t2 = std::chrono::steady_clock::now();
     if (er != 0 || conv.c != 48 || conv.elempack != 1 || conv.elemsize != 4) {
         set_err("extract c33 failed rc=" + std::to_string(er) + " c=" + std::to_string(conv.c)

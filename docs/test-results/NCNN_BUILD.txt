@@ -47,3 +47,21 @@ debug apk: app/build/outputs/apk/debug/app-debug.apk
   classes5.dex_sha256: f7cb9ce3b5b6895d95fd9e2684426171e83350b6310d475de288c83729eaa3f5
   classes6.dex_sha256: 1aa00fd53e5ee4bd14a06e2980664c6930a5caa82ab4937ea49d729a9325ae2c
   classes.dex is the 1092-byte multidex stub. aiExtractMs is in classes3.dex and classes6.dex. extractNs is in classes5.dex and classes6.dex. networkNs is absent.
+
+----------------------------------------------------------------
+HDR Studio 2.3.3-test (built 2026-11-04 in a Linux cloud workspace with tools/build_local.sh, TEST=1)
+package: com.mojahed.hdrstudio.test  versionCode 10  versionName 2.3.3-test
+sources_sha256: b24925f865ba4c25e9a9e44880dcecb7e63c3f005930d7e4fcd93ab4e7ea6eb4  (sha256 of 'sha256sum' over app/src/main, sorted paths)
+classes.dex_sha256: 4e86bb27ee4275ba59ffdd6c1ff41792a167f15bc65c738a1568971004feb680
+apk_sha256: 11880bc216e38fe19ecd68b75bb791055bca200e39b812d6cbae5a7e634f2990
+signing: a local test key generated for this build (not the 2.3.x key, not CI). Uninstall .test first.
+native: lib/arm64-v8a/libhdrstudio_ncnn.so is byte-identical to the one in 2.3.2-test
+  sha256 b7fff38ba92b24620392807c659a82a806814168fe3bc5e7acb873259ef2d736
+  2.3.2-test APK sha256 4752e52b203c445d67edd17370bd9f9f841e5effdd64644bd6a0061e3917a1bf
+  The 2.3.2 source was not on GitHub. Its JNI calls used by 2.3.3 are nativeCreate(byte[], vulkan, fp16, winograd, sgemm, packing),
+  nativeForward, nativeDestroy, nativeFullVulkan, nativeLastError, nativeDevice: the same signatures, read from the 2.3.2 dex.
+  The tiling fix is Java only (TilePlan), so the reused .so does not carry it or need it.
+  app/src/main/cpp/ncnn_sr.cpp in this commit implements those signatures (CPU option, explicit winograd/sgemm/packing, unpack if elempack != 1).
+  It passed g++ -fsyntax-only against the ncnn 20250503 android-vulkan headers (archive sha256 4b54cd11..., same as above),
+  but was not compiled with the NDK here: dl.google.com is blocked from this workspace. The next NDK build replaces the .so.
+  2.3.2's nativeLayer/nativeProbe and NcnnMatchProbe are not in this source; their phone result (direct, packing, PixelShuffle, GL re-upload correct) is recorded.

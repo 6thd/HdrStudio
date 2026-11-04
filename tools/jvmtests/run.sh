@@ -15,11 +15,13 @@ javac --release 11 -encoding UTF-8 -d "$T" \
   "$SRC/core/ColorMath.java" "$SRC/core/FrameRate.java" "$SRC/encode/HdrMetadata.java" "$SRC/stages/SceneAnalyzer.java" \
   "$SRC/encode/HevcBitstream.java" "$SRC/encode/PrecisionMetric.java" "$SRC/encode/EncodeConfig.java" "$SRC/encode/Check.java" \
   "$SRC/encode/PathTestVerdict.java" "$SRC/encode/PixelDiagnostics.java" "$SRC/encode/Hdr10FileCheck.java" "$SRC/encode/HdrSeiGuard.java" \
-  "$SRC/core/MemoryBudget.java" "$SRC/core/PreviewCrop.java" "$SRC/core/SourceInfo.java" "$SRC/stages/PipelineParams.java" || exit 1
+  "$SRC/core/MemoryBudget.java" "$SRC/core/PreviewCrop.java" "$SRC/core/SourceInfo.java" "$SRC/stages/PipelineParams.java" \
+  "$SRC/ai/TilePlan.java" || exit 1
 J="$ROOT/tools/jvmtests"
 javac --release 11 -encoding UTF-8 -cp "$T" -d "$T" "$J/JvmTests.java" "$J/BitstreamTests.java" "$J/HevcInspect.java" "$J/StreamUtil.java" \
-  "$J/SeiGuardTests.java" "$J/NotesTests.java" "$J/MemoryTests.java" "$J/PreviewCropTests.java" || exit 1
+  "$J/SeiGuardTests.java" "$J/NotesTests.java" "$J/MemoryTests.java" "$J/PreviewCropTests.java" "$J/TileTests.java" || exit 1
 step java -Dstdout.encoding=UTF-8 -cp "$T" JvmTests || rc=1
+step java -Dstdout.encoding=UTF-8 -cp "$T" TileTests || rc=1
 # the harness pipeline (engine.js) without a GPU: allocation and crop geometry must equal the app's models
 if command -v node >/dev/null && node "$ROOT/tools/harness/alloc_probe.js" > "$T/alloc_probe.txt"; then
   step java -Dstdout.encoding=UTF-8 -cp "$T" MemoryTests "$T/alloc_probe.txt" || rc=1

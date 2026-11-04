@@ -171,7 +171,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         aiTestBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runAiTest(); } });
         c4.addView(aiTestBtn, lp(4));
         ncnnSwitch = sw(c4, "محرك AI التجريبي: ncnn/Vulkan (ليس الافتراضي)", prefs.getBoolean("ncnn", false));
-        compareBtn = button("مقارنة GLSL و ncnn", false);
+        compareBtn = button("فحص بلاطات ncnn ثم المقارنة", false);
         compareBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { runEngineCompare(); } });
         c4.addView(compareBtn, lp(4));
         compareText = text("مقارنة المحركين لم تُشغَّل. لا تحتاج فيديو ولا نجاح تصدير HDR.", 12, dim);
@@ -427,7 +427,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     }
 
     private void runEngineCompare() {
-        compareText.setText("جارٍ مقارنة GLSL و ncnn على أنماط مضمّنة. لا يُستخدم فيديو ولا يُفتح التصدير.");
+        compareText.setText("جارٍ فحص المسار المقسّم لـ ncnn (CPU FP32 وVulkan FP32 وFP16) ثم قياس الأداء إن نجح. لا يُستخدم فيديو ولا يُفتح التصدير.");
         compareBtn.setEnabled(false);
         bg(new Runnable() { @Override public void run() {
             final String report = com.mojahed.hdrstudio.ai.AiEngineCompare.run(getApplicationContext(), new com.mojahed.hdrstudio.ai.AiEngineCompare.Progress() {
