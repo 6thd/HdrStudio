@@ -125,3 +125,8 @@ was hashed. From run #5 on, BUILD_INFO lists every dex file and one hash over al
   versionCode 15 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (identical to 2.3.7, so 2.3.7's ncnn acceptance
   and FP16-storage decision carry over) · dex (all) 84cf94f2bbe33eccc3d146014058848167a3b38eab0d613a9aed1c22d43ffa92
   test APK 90cbac38270a7d268364d7ce507715d513c3e9db50d918aebd64e931e3759a68 (the phone report must print this).
+2.3.9-test, Actions run #9 (https://github.com/6thd/HdrStudio/actions/runs/41913908786), commit 8f778a5632fdef4be119a65106bf37273a58e452: green.
+  versionCode 16 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (unchanged, so the ncnn acceptance and the
+  FP16-storage + FP32-arithmetic decision carry over) · JVM 178 pass, 0 fail, 0 missing (AvcTests included)
+  test APK 4ed7fe4e86266bc82f8f8b589e80f292db22f26365acd7d91249f5e0ff851cbc (the phone report must print this)
+  artifact zip digest 72a3fa5cee07a57af3aa719805f298ee18b08ccbbaedb5dcab5204a571ca1797
