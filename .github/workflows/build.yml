@@ -116,7 +116,10 @@ jobs:
             echo "ELF LOAD alignment: $ALIGN"
             echo "ncnn: 20250503 android-vulkan sha256 4b54cd11094dae1371c59fb202dfd92d22962ffaef04317bdf99b12c09f44ed3"
             echo "NDK: 27.2.12479018  CMake: 3.22.1"
-            echo "classes.dex: $(unzip -p out/HDR-Studio-test.apk classes.dex | sha256sum | cut -d' ' -f1)"
+            # all dex files (debug builds split classes across classes*.dex); the first one alone proves nothing
+            unzip -Z1 out/HDR-Studio-test.apk | grep -E '^classes[0-9]*\.dex$' | LC_ALL=C sort | while read -r d; do
+              echo "$d: $(unzip -p out/HDR-Studio-test.apk "$d" | sha256sum | cut -d' ' -f1)"; done
+            echo "dex (all, in name order): $(unzip -Z1 out/HDR-Studio-test.apk | grep -E '^classes[0-9]*\.dex$' | LC_ALL=C sort | while read -r d; do unzip -p out/HDR-Studio-test.apk "$d"; done | sha256sum | cut -d' ' -f1)"
             cat out/SHA256SUMS.txt
           } | tee out/BUILD_INFO.txt
       - uses: actions/upload-artifact@v4

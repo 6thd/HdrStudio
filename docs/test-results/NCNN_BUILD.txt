@@ -103,3 +103,8 @@ release APK: 28e89234fb03d96a56779eebe943b14fe448d352969a584a2674558056feed3b (n
 JVM SUMMARY pass=145 fail=0 missing=0 (org.json commit f9b5587c; jar bytes differ by JDK, the commit is the pin)
 Runs #1 and #2 failed before any APK: scripts without the executable bit (exit 126), then numpy missing for the ramp streams.
 Note: the alias secret is the word "test", so GitHub masks that word as *** throughout the logs.
+
+2.3.5-test, Actions run #4 (https://github.com/6thd/HdrStudio/actions/runs/41843326151), commit 5c3e77a: green,
+JVM 156/0/0, certificate 1ffb4f14...4095a, native 3bf0be540cdb45f9f61334cd4935254e5188915d06ffe609ab4dcb1282136d77.
+Its "classes.dex" line equals 2.3.4's because the debug APK splits classes over classes*.dex and only the first
+was hashed. From run #5 on, BUILD_INFO lists every dex file and one hash over all of them.
