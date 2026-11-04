@@ -108,10 +108,77 @@ public final class VideoEncoder {
             codec.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
         } catch (RuntimeException e) {
             codec.release(); thread.quitSafely();
-            throw new IllegalStateException("رفض المرمّز الإعدادات: " + e.getMessage(), e);
+            throw new IllegalStateException("مرحلة الفشل: VideoEncoder.configure\n" + describeFormat(f) + describeThrowable(e), e);
         }
-        inputSurface = codec.createInputSurface();
-        codec.start();
+        try {
+            inputSurface = codec.createInputSurface();
+            codec.start();
+        } catch (RuntimeException e) {
+            codec.release(); thread.quitSafely();
+            throw new IllegalStateException("مرحلة الفشل: VideoEncoder.createInputSurface/start\n" + describeThrowable(e), e);
+        }
+    }
+
+    /** The format handed to configure(), key by key, for the diagnostic report (ported from 2.3.2-test). */
+    public static String describeFormat(MediaFormat f) {
+        if (f == null) return "MediaFormat: null\n";
+        StringBuilder b = new StringBuilder();
+        b.append("MediaFormat: ").append(f).append('\n');
+        line(b, f, "mime", false);
+        line(b, f, "width", true);
+        line(b, f, "height", true);
+        line(b, f, "color-format", true);
+        line(b, f, "bitrate", true);
+        line(b, f, "frame-rate", false);
+        line(b, f, "i-frame-interval", false);
+        line(b, f, "bitrate-mode", true);
+        line(b, f, "profile", true);
+        line(b, f, "color-standard", true);
+        line(b, f, "color-transfer", true);
+        line(b, f, "color-range", true);
+        java.nio.ByteBuffer hs = f.containsKey("hdr-static-info") ? f.getByteBuffer("hdr-static-info") : null;
+        if (hs == null) {
+            b.append("  hdr-static-info: absent\n");
+        } else {
+            java.nio.ByteBuffer d = hs.duplicate();
+            b.append("  hdr-static-info bytes=").append(d.remaining());
+            int n = Math.min(32, d.remaining());
+            for (int i = 0; i < n; i++) b.append(String.format(java.util.Locale.US, " %02x", d.get() & 0xFF));
+            b.append('\n');
+        }
+        return b.toString();
+    }
+
+    /** Exception chain with MediaCodec.CodecException details (diagnostic info, error code, transient/recoverable). */
+    public static String describeThrowable(Throwable t) {
+        StringBuilder b = new StringBuilder();
+        for (Throwable x = t; x != null; x = x.getCause()) {
+            b.append(x.getClass().getName()).append(": ").append(String.valueOf(x.getMessage())).append('\n');
+            if (x instanceof MediaCodec.CodecException) {
+                MediaCodec.CodecException ce = (MediaCodec.CodecException) x;
+                b.append("  diagnostic=").append(String.valueOf(ce.getDiagnosticInfo())).append(" errorCode=").append(ce.getErrorCode())
+                        .append(" transient=").append(ce.isTransient()).append(" recoverable=").append(ce.isRecoverable()).append('\n');
+            }
+            if (x.getCause() == x) break;
+        }
+        return b.toString();
+    }
+
+    private static void line(StringBuilder b, MediaFormat f, String key, boolean isInt) {
+        if (!f.containsKey(key)) { b.append("  ").append(key).append(": absent\n"); return; }
+        b.append("  ").append(key).append('=');
+        try {
+            if (isInt) b.append(f.getInteger(key));
+            else {
+                if (key.equals("mime")) b.append(f.getString(key));
+                else {
+                    try { b.append(f.getFloat(key)); } catch (ClassCastException e) { b.append(f.getInteger(key)); }
+                }
+            }
+        } catch (ClassCastException e) {
+            b.append("unreadable ").append(e.getClass().getSimpleName());
+        }
+        b.append('\n');
     }
 
     private void copyIfMissing(MediaFormat of, String key) {

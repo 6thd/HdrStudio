@@ -63,6 +63,11 @@ public final class AiEngineCompare {
                     if (!o.vulkan) cpu = res;
                     r.append("قبول ").append(o.label()).append(res.pass ? ": ناجح\n" : ": فاشل\n");
                     if (res.pass && o.vulkan) accepted.add(o);
+                    if (!res.pass && o.vulkan && net.loaded) {
+                        step(progress, "تشخيص الطبقات " + o.label());
+                        NcnnSr ref = NcnnSr.open(ctx.getAssets(), NcnnSr.Opts.cpuFp32());
+                        try { if (ref.loaded) NcnnTileCheck.firstDivergentLayer(r, ref, net, cases); } finally { ref.close(); }
+                    }
                 } finally {
                     net.close();
                 }

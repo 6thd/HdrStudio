@@ -3,7 +3,9 @@ HDR Studio 2.3.4-test — قبول أوضاع ncnn لكل وضع، ثم قياس
 
 البناء: من GitHub Actions فقط (المكتبة الأصلية تُبنى من المصدر). Actions ← Build HDR Studio ← Run workflow
 على فرع work/ncnn-vulkan. الناتج HDR-Studio-apk فيه HDR-Studio-test.apk وBUILD_INFO.txt.
-يتطلب أسرار المفتاح الثابت HDR_KEYSTORE_BASE64 وHDR_KEYSTORE_PASSWORD وHDR_KEY_ALIAS وHDR_KEY_PASSWORD.
+يتطلب أسرار المفتاح الدائم HDR_KEYSTORE_BASE64 وHDR_KEYSTORE_PASSWORD وHDR_KEY_ALIAS وHDR_KEY_PASSWORD.
+بصمة الشهادة 1ffb4f14…4095a، وهي نفسها في 2.3.3-test المثبتة، فتُثبَّت 2.3.4 فوقها دون حذف.
+لا تختر allow_unstable_key لهذه النسخة.
 
 1. افتح التطبيق. لا تختر فيديو.
 2. اضغط «فحص بلاطات ncnn ثم المقارنة».

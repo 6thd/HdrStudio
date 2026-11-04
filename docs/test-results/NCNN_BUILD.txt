@@ -78,3 +78,16 @@ and the NDK cannot be downloaded in the workspace that wrote this change, so 2.3
 native library built from app/src/main/cpp at the built commit, signed with the HDR_KEYSTORE_* secrets.
 The run's BUILD_INFO.txt is the build record (commit, signing certificate SHA-256, .so SHA-256, ELF alignment).
 ncnn_sr.cpp passed g++ -fsyntax-only against the ncnn 20250503 headers before the push.
+
+2.3.4 build rules (in .github/workflows/build.yml):
+- one permanent test signing key, certificate SHA-256 1ffb4f14c6df8f7e90cfb5efe84a04f6a46a282120d016ac1cb7213ba4b4095a
+  (CN=HDR Studio local test, RSA 3072, valid to 2036-11-01). It signed the installed 2.3.3-test (apk 10a2aaf3...),
+  so 2.3.4 installs over it. It is not the 2.3.1/2.3.2 key (4cc961176a1b9b25fb1c8560b42bd58398e47af8980362e05120c490dd723dc4).
+  The key lives only in the HDR_KEYSTORE_* secrets; CI fails if the test APK carries another certificate.
+  allow_unstable_key is for throw-away runs only and is not used for the version that keeps updating.
+- the native library is compiled from app/src/main/cpp at the built commit; CI fails if the 2.3.2 binary
+  (b7fff38b...) is in the APK, if a JNI symbol of the precision interface is missing
+  (nativeCreate/Options/Layer/Forward/Destroy/FullVulkan/LastError/Device), or if the stale nativeProbe is present.
+- JVM tests use real org.json (stleary/JSON-java 20240303, commit f9b5587c87aaf02e4a5ed1991d48d6c05993624a,
+  tools/jvmtests/org_json.sh) ahead of android.jar, for the v2.1 compile and NotesTests' class loader.
+  Clean run: fresh clone, unmodified android-35.jar, empty work dir -> JVM SUMMARY pass=145 fail=0 missing=0.

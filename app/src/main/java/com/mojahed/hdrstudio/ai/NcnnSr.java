@@ -170,6 +170,15 @@ public final class NcnnSr {
         return f;
     }
 
+    /** One intermediate blob ("c0".."c33", "p0".."p32") as top-down CHW floats, or null. Diagnostic only. */
+    public float[] layer(float[] rgb, int w, int h, String blob) {
+        if (!loaded) return null;
+        float[] out = new float[w * h * 64];
+        int n = nativeLayer(handle, rgb, w, h, blob, out);
+        if (n <= 0) return null;
+        return n == out.length ? out : java.util.Arrays.copyOf(out, n);
+    }
+
     public String summary() {
         if (!loaded) return "ncnn/Vulkan غير جاهز: " + reason;
         return String.format(Locale.US, "ncnn %s · %s · %s · تحميل %d ms · %s",
@@ -180,6 +189,7 @@ public final class NcnnSr {
 
     private static native long nativeCreate(byte[] model, int flags);
     private static native String nativeOptions(long handle);
+    private static native int nativeLayer(long handle, float[] in, int w, int h, String blob, float[] out);
     private static native void nativeDestroy(long handle);
     private static native int nativeForward(long handle, float[] in, int w, int h, float[] out, long[] phaseNs);
     private static native String nativeLastError();

@@ -19,9 +19,10 @@ javac --release 11 -encoding UTF-8 -d "$T" \
   "$SRC/ai/TilePlan.java" || exit 1
 J="$ROOT/tools/jvmtests"
 javac --release 11 -encoding UTF-8 -cp "$T" -d "$T" "$J/JvmTests.java" "$J/BitstreamTests.java" "$J/HevcInspect.java" "$J/StreamUtil.java" \
-  "$J/SeiGuardTests.java" "$J/NotesTests.java" "$J/MemoryTests.java" "$J/PreviewCropTests.java" "$J/TileTests.java" || exit 1
+  "$J/SeiGuardTests.java" "$J/NotesTests.java" "$J/MemoryTests.java" "$J/PreviewCropTests.java" "$J/TileTests.java" "$J/DiagTests.java" || exit 1
 step java -Dstdout.encoding=UTF-8 -cp "$T" JvmTests || rc=1
 step java -Dstdout.encoding=UTF-8 -cp "$T" TileTests || rc=1
+step java -Dstdout.encoding=UTF-8 -cp "$T" DiagTests || rc=1
 # the harness pipeline (engine.js) without a GPU: allocation and crop geometry must equal the app's models
 if command -v node >/dev/null && node "$ROOT/tools/harness/alloc_probe.js" > "$T/alloc_probe.txt"; then
   step java -Dstdout.encoding=UTF-8 -cp "$T" MemoryTests "$T/alloc_probe.txt" || rc=1
@@ -71,6 +72,11 @@ step java -Dstdout.encoding=UTF-8 -cp "$T" SeiGuardTests "$B" || rc=1
 # v2.1 classes for the regression proofs
 BASE=${HDR_BASELINE_COMMIT:-cba40c6}
 AJ="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}/platforms/android-35/android.jar"
+# real org.json, pinned (android.jar has only stubs for it); first on every classpath that holds android.jar
+OJ=$("$ROOT/tools/jvmtests/org_json.sh" "$T") || { echo "FAIL org_json_dependency  tools/jvmtests/org_json.sh failed" | tee -a "$LOG"; rc=1; OJ=""; }
+[ -n "$OJ" ] && echo "INFO org.json 20240303 commit $(cat "$T/org-json/COMMIT") jar $(sha256sum "$OJ" | cut -d' ' -f1)" | tee -a "$LOG"
+LCP="$AJ"; [ -n "$OJ" ] && LCP="$OJ:$AJ"
+if command -v cygpath >/dev/null; then LCP=$(cygpath -m "$AJ"); [ -n "$OJ" ] && LCP="$(cygpath -m "$OJ");$LCP"; fi  # Windows java: ';' and C:/
 LEG=-
 if git -C "$ROOT" cat-file -e "$BASE^{commit}" 2>/dev/null && [ -f "$AJ" ]; then
   L="$T/legacy"; rm -rf "$L"; mkdir -p "$L/src" "$L/classes"
@@ -84,11 +90,11 @@ if git -C "$ROOT" cat-file -e "$BASE^{commit}" 2>/dev/null && [ -f "$AJ" ]; then
   else
     cat "$L/list.unix" > "$L/list"
   fi
-  if javac --release 11 -nowarn -encoding UTF-8 -cp "$AJ" -d "$L/classes" @"$L/list" >"$L/javac.log" 2>&1; then
+  if javac --release 11 -nowarn -encoding UTF-8 -cp "$LCP" -d "$L/classes" @"$L/list" >"$L/javac.log" 2>&1; then
     LEG="$L/classes"; echo "INFO v2.1 classes compiled from $BASE" | tee -a "$LOG"
   else echo "INFO v2.1 classes failed to compile (see $L/javac.log)" | tee -a "$LOG"; fi
 fi
-step java -Dstdout.encoding=UTF-8 -cp "$T" NotesTests "$B" "$LEG" "$AJ" "$ROOT" || rc=1
+step java -Dstdout.encoding=UTF-8 -cp "$T" NotesTests "$B" "$LEG" "$LCP" "$ROOT" || rc=1
 
 # the streams with app-inserted SEI must decode completely and show the metadata to an independent tool
 probe_sei() {   # file frames maxcll maxfall

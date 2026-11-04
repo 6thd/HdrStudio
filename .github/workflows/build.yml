@@ -68,6 +68,10 @@ jobs:
           HDR_KEY_PASSWORD: ${{ secrets.HDR_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleDebug assembleRelease
       - name: Collect APKs and build record
+        env:
+          # SHA-256 of the permanent test signing certificate (public; the key itself is in the HDR_KEYSTORE_* secrets)
+          TEST_CERT_SHA256: 1ffb4f14c6df8f7e90cfb5efe84a04f6a46a282120d016ac1cb7213ba4b4095a
+          ALLOW: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unstable_key }}
         run: |
           mkdir -p out
           cp app/build/outputs/apk/debug/*.apk out/HDR-Studio-test.apk
@@ -79,6 +83,21 @@ jobs:
           mkdir -p "$RUNNER_TEMP/apk" && unzip -q -o out/HDR-Studio-test.apk 'lib/*' -d "$RUNNER_TEMP/apk"
           SO="$RUNNER_TEMP/apk/lib/arm64-v8a/libhdrstudio_ncnn.so"
           test -f "$SO" || { echo "::error::libhdrstudio_ncnn.so is missing from the test APK"; exit 1; }
+          # the library must be this build's, with the precision-flag JNI; the 2.3.2 binary must never ship again
+          SOSHA=$(sha256sum "$SO" | cut -d' ' -f1)
+          [ "$SOSHA" != "b7fff38ba92b24620392807c659a82a806814168fe3bc5e7acb873259ef2d736" ] || { echo "::error::the 2.3.2 native library is in the APK"; exit 1; }
+          NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          for f in nativeCreate nativeOptions nativeLayer nativeForward nativeDestroy nativeFullVulkan nativeLastError nativeDevice; do
+            "$NM" -D --defined-only "$SO" | grep -q " Java_com_mojahed_hdrstudio_ai_NcnnSr_${f}$" || { echo "::error::JNI symbol $f missing"; exit 1; }
+          done
+          for f in nativeProbe; do
+            if "$NM" -D --defined-only "$SO" | grep -q " Java_com_mojahed_hdrstudio_ai_NcnnSr_${f}$"; then echo "::error::stale JNI symbol $f"; exit 1; fi
+          done
+          # one permanent test key: the APK must carry exactly this certificate
+          CERT=$("$BT/apksigner" verify --print-certs out/HDR-Studio-test.apk | grep -m1 "SHA-256 digest" | awk '{print $NF}')
+          if [ "$CERT" != "$TEST_CERT_SHA256" ] && [ "$ALLOW" != "true" ]; then
+            echo "::error::test APK certificate $CERT is not the permanent test key $TEST_CERT_SHA256"; exit 1
+          fi
           ALIGN=$("$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -lW "$SO" | awk '$1=="LOAD"{print $NF}' | sort -u | tr '\n' ' ')
           {
             echo "HDR Studio $(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)-test (GitHub Actions)"
@@ -86,7 +105,8 @@ jobs:
             echo "ref: $GITHUB_REF_NAME  run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             "$BT/aapt2" dump badging out/HDR-Studio-test.apk | head -1
             "$BT/apksigner" verify --print-certs out/HDR-Studio-test.apk | grep -E "SHA-256|DN" | sed 's/^/signing: /'
-            echo "native: $(sha256sum "$SO" | cut -d' ' -f1)  lib/arm64-v8a/libhdrstudio_ncnn.so  built from app/src/main/cpp at this commit"
+            echo "native: $SOSHA  lib/arm64-v8a/libhdrstudio_ncnn.so  built from app/src/main/cpp at this commit"
+            echo "permanent test key expected: $TEST_CERT_SHA256  got: $CERT"
             echo "ELF LOAD alignment: $ALIGN"
             echo "ncnn: 20250503 android-vulkan sha256 4b54cd11094dae1371c59fb202dfd92d22962ffaef04317bdf99b12c09f44ed3"
             echo "NDK: 27.2.12479018  CMake: 3.22.1"

@@ -24,7 +24,7 @@ import java.util.stream.Stream;
  * Notes A, B, D of the v2.1 review, each with a regression proof: the v2.1 logic (compiled from
  * the baseline commit into its own class loader by run.sh) is run on the same inputs and shown to
  * give the wrong answer that the new code fixes.
- * usage: NotesTests <streams dir> <legacy classes dir> <android.jar> <repo root>
+ * usage: NotesTests <streams dir> <legacy classes dir> <classpath: org.json jar, then android.jar> <repo root>
  */
 public class NotesTests {
     static int fails = 0, missing = 0;
@@ -67,8 +67,15 @@ public class NotesTests {
 
     public static void main(String[] a) throws Exception {
         String d = a[0];
-        if (!a[1].equals("-"))
-            legacy = new URLClassLoader(new URL[]{new File(a[1]).toURI().toURL(), new File(a[2]).toURI().toURL()}, ClassLoader.getPlatformClassLoader());
+        if (!a[1].equals("-")) {
+            // legacy classes, then each classpath entry in order: the real org.json must come before
+            // android.jar, whose org.json classes are stubs
+            String[] cp = a[2].split(java.util.regex.Pattern.quote(File.pathSeparator));
+            URL[] urls = new URL[cp.length + 1];
+            urls[0] = new File(a[1]).toURI().toURL();
+            for (int i = 0; i < cp.length; i++) urls[i + 1] = new File(cp[i]).toURI().toURL();
+            legacy = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
+        }
         Path root = Paths.get(a[3]);
 
         // ================= A: pixel statistics are diagnostic only

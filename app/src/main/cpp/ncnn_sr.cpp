@@ -260,4 +260,38 @@ JNIEXPORT jint JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeForward(
     return h->full_vulkan ? 1 : 2;
 }
 
+// One intermediate blob (c0..c33, p0..p32) for the per-layer diagnostic. in: bottom-up RGB like nativeForward.
+// out: top-down CHW floats. Returns the element count, or a negative error. Ported from 2.3.2-test's NcnnMatchProbe tool.
+JNIEXPORT jint JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeLayer(
+        JNIEnv* e, jclass, jlong handle, jfloatArray inArr, jint w, jint hgt, jstring blobName, jfloatArray outArr) {
+    NetHolder* h = reinterpret_cast<NetHolder*>(handle);
+    if (!h || w <= 0 || hgt <= 0) { set_err("bad layer args"); return -1; }
+    if (e->GetArrayLength(inArr) < w * hgt * 3) { set_err("layer input size"); return -2; }
+    const char* name = e->GetStringUTFChars(blobName, nullptr);
+    std::string blob(name);
+    e->ReleaseStringUTFChars(blobName, name);
+    jfloat* in = e->GetFloatArrayElements(inArr, nullptr);
+    ncnn::Mat input(w, hgt, 3);
+    for (int c = 0; c < 3; c++) {
+        float* dst = input.channel(c);
+        for (int y = 0; y < hgt; y++) {
+            int gy = hgt - 1 - y;
+            for (int x = 0; x < w; x++) dst[y * w + x] = in[(gy * w + x) * 3 + c];
+        }
+    }
+    e->ReleaseFloatArrayElements(inArr, in, JNI_ABORT);
+    ncnn::Extractor ex = h->net.create_extractor();
+    if (ex.input("data", input) != 0) { set_err("extractor.input failed"); return -3; }
+    ncnn::Mat m;
+    if (ex.extract(blob.c_str(), m) != 0 || m.empty()) { set_err("extract " + blob + " failed"); return -4; }
+    if (m.elempack != 1) { ncnn::Mat u; ncnn::convert_packing(m, u, 1, h->net.opt); m = u; }
+    if (m.elemsize != 4) { set_err("extract " + blob + " elemsize " + std::to_string(m.elemsize)); return -5; }
+    const int n = m.c * m.h * m.w;
+    if (e->GetArrayLength(outArr) < n) { set_err("layer output size"); return -6; }
+    std::vector<float> flat((size_t)n);
+    for (int c = 0; c < m.c; c++) std::memcpy(flat.data() + (size_t)c * m.h * m.w, (const float*)m.channel(c), sizeof(float) * m.h * m.w);
+    e->SetFloatArrayRegion(outArr, 0, n, flat.data());
+    return n;
+}
+
 } // extern C

@@ -202,10 +202,19 @@ public final class EncodeSelfTest {
             }
         } catch (com.mojahed.hdrstudio.gl.GlException e) {
             v.markNotRunBecauseEgl(e.getMessage());
-            log.append(e.getMessage()).append('\n');
+            log.append("مرحلة الفشل: EGL\n").append(e.getMessage()).append('\n');
         } catch (Throwable t) {
-            if (isEglInitFailure(t)) v.markNotRunBecauseEgl(t.getMessage());
-            log.append("خطأ: ").append(t.getMessage()).append('\n');
+            // stage of the failure, as in 2.3.2-test: encoder configure, EGL, or anything else with its exception chain
+            if (isConfigureFailure(t)) {
+                v.markNotMeasured("VideoEncoder.configure", t.getMessage());
+                log.append(t.getMessage()).append('\n');
+            } else if (isEglInitFailure(t)) {
+                v.markNotRunBecauseEgl(t.getMessage());
+                log.append("مرحلة الفشل: EGL\n").append(t.getMessage()).append('\n');
+            } else {
+                log.append("مرحلة الفشل: ").append(t.getClass().getName()).append('\n');
+                log.append(com.mojahed.hdrstudio.encode.VideoEncoder.describeThrowable(t));
+            }
         }
         r.detail = log.toString().trim();
         store(ctx, r);
@@ -369,6 +378,14 @@ public final class EncodeSelfTest {
         m.decoderTags = tags(outFmt);
         if (hdr) log.append("سطح EGL موسوم BT.2020 PQ: ").append(pqTagged ? "نعم" : "لا (الألوان تُقاس مباشرة أعلاه)").append('\n');
         return m;
+    }
+
+    private static boolean isConfigureFailure(Throwable t) {
+        for (Throwable x = t; x != null; x = x.getCause()) {
+            String m = x.getMessage();
+            if (m != null && m.contains("مرحلة الفشل: VideoEncoder.configure")) return true;
+        }
+        return false;
     }
 
     private static boolean isEglInitFailure(Throwable t) {

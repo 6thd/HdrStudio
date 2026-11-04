@@ -98,6 +98,35 @@ public final class NcnnTileCheck {
         return res;
     }
 
+    /**
+     * For a Vulkan mode that failed: the first layer whose output differs from CPU FP32 by more than
+     * 1e-3 on the smallest case, and the per-layer maxAbs. Diagnostic only; it changes no acceptance.
+     * (2.3.2-test's NcnnMatchProbe did the same with a stored vector.)
+     */
+    public static void firstDivergentLayer(StringBuilder r, NcnnSr cpu, NcnnSr vk, List<Case> cases) {
+        Case c = cases.get(0);
+        for (Case k : cases) if (k.w * k.h < c.w * c.h) c = k;
+        String first = null;
+        StringBuilder rows = new StringBuilder();
+        for (int l = 0; l <= 33; l++) {
+            String[] names = l < 33 ? new String[]{"c" + l, "p" + l} : new String[]{"c33"};
+            for (String b : names) {
+                float[] a = cpu.layer(c.in, c.w, c.h, b), v = vk.layer(c.in, c.w, c.h, b);
+                if (a == null || v == null) { rows.append(' ').append(b).append("=تعذر"); if (first == null) first = b; continue; }
+                double m = 0; int bad = 0;
+                for (int i = 0; i < Math.min(a.length, v.length); i++) {
+                    if (!Float.isFinite(a[i]) || !Float.isFinite(v[i])) { bad++; continue; }
+                    m = Math.max(m, Math.abs(a[i] - v[i]));
+                }
+                if ((m > 1e-3 || bad > 0) && first == null) first = b;
+                if (b.startsWith("c") && (l % 4 == 0 || l == 33 || (first != null && first.equals(b))))
+                    rows.append(String.format(Locale.US, " %s=%.2g", b, m)).append(bad > 0 ? "(NaN/Inf " + bad + ")" : "");
+            }
+        }
+        r.append(String.format(Locale.US, "  تشخيص الطبقات %dx%d مقابل CPU FP32: أول طبقة فرقها > 1e-3: %s\n   maxAbs:%s\n",
+                c.w, c.h, first == null ? "لا توجد" : first, rows));
+    }
+
     /** region: 0 corner, 1 edge, 2 seam, 3 centre. */
     static int region(int lx, int ly, int w, int h, int t) {
         boolean ex = lx < EDGE || lx >= w - EDGE;

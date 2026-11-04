@@ -46,6 +46,9 @@ import java.util.Map;
  * INCONCLUSIVE and export stays closed.
  */
 public final class UndeclaredConfigTrial {
+    // how far one config attempt got (2.3.2-test diagnostics)
+    private static final int STAGE_EARLY = 0, STAGE_CONFIGURE = 1, STAGE_WINDOW = 2, STAGE_SURFACE = 3;
+
     private static final int[] CONFIG_IDS = {24, 25, 23};
     private static final int W = 640, H = 360, FRAMES = 8, TIMEOUT_MS = 8000;
     private static final double[][] PATCHES = new double[16][];
@@ -86,11 +89,15 @@ public final class UndeclaredConfigTrial {
             return log.toString();
         }
         boolean anySurface = false, anyFile = false, anyMeasured = false, anyTenBitProof = false;
+        int configureFails = 0, windowFails = 0, earlyStops = 0;
         try {
             for (int id : CONFIG_IDS) {
                 log.append("\n----- try config #").append(id).append(" -----\n");
                 boolean[] flags = new boolean[4];
-                tryOne(ctx, dpy, enc, id, log, flags);
+                int stage = tryOne(ctx, dpy, enc, id, log, flags);
+                if (stage == STAGE_CONFIGURE) configureFails++;
+                else if (stage == STAGE_WINDOW) windowFails++;
+                else if (stage == STAGE_EARLY) earlyStops++;
                 anySurface |= flags[0];
                 anyFile |= flags[1];
                 anyMeasured |= flags[2];
@@ -101,7 +108,11 @@ public final class UndeclaredConfigTrial {
             EGL14.eglReleaseThread();
         }
         softwareEval(ctx, caps, log);
-        if (!anySurface) closeEglAttempt(log, "eglCreateWindowSurface failed on #24/#25/#23");
+        if (!anySurface && configureFails > 0 && windowFails == 0)
+            closeEglAttempt(log, "VideoEncoder.configure فشل قبل إنشاء سطح EGL. eglCreateWindowSurface لم يُستدعَ ولا يُنسب الفشل إليه. configure="
+                    + configureFails + " محاولات توقفت قبل المرمّز=" + earlyStops);
+        else if (!anySurface && windowFails > 0 && configureFails == 0) closeEglAttempt(log, "eglCreateWindowSurface failed on #24/#25/#23");
+        else if (!anySurface) closeEglAttempt(log, "لم يُنشأ سطح. configure=" + configureFails + " eglCreateWindowSurface=" + windowFails + " قبل المرمّز=" + earlyStops);
         else if (!anyMeasured) closeEglAttempt(log, "surface and/or Main10 file existed but precision was not measured");
         else if (!anyTenBitProof) closeEglAttempt(log, "precision measured and did not prove 10-bit");
         else {
@@ -120,10 +131,10 @@ public final class UndeclaredConfigTrial {
         return null;
     }
 
-    /** flags: [windowOk, fileOk, precisionMeasured] */
-    private static void tryOne(Context ctx, EGLDisplay dpy, DeviceCaps.Enc enc, int configId, StringBuilder log, boolean[] flags) {
+    /** flags: [windowOk, fileOk, precisionMeasured]. Returns the stage reached (STAGE_*), ported from 2.3.2-test. */
+    private static int tryOne(Context ctx, EGLDisplay dpy, DeviceCaps.Enc enc, int configId, StringBuilder log, boolean[] flags) {
         EGLConfig cfg = findId(dpy, configId, log);
-        if (cfg == null) return;
+        if (cfg == null) return STAGE_EARLY;
         int st = EglDiag.get(dpy, cfg, EGL14.EGL_SURFACE_TYPE);
         int rec = EglDiag.get(dpy, cfg, EglDiag.RECORDABLE);
         int es = EglDiag.get(dpy, cfg, EGL14.EGL_RENDERABLE_TYPE);
@@ -132,11 +143,11 @@ public final class UndeclaredConfigTrial {
                 .append(" ES3=").append((es & EglDiag.ES3) != 0).append('\n');
         if ((st & EGL14.EGL_WINDOW_BIT) == 0) {
             log.append("CLOSED this attempt: no WINDOW_BIT\n");
-            return;
+            return STAGE_EARLY;
         }
         if ((es & EglDiag.ES3) == 0) {
             log.append("CLOSED this attempt: not GLES3\n");
-            return;
+            return STAGE_EARLY;
         }
         EncodeConfig cfgEnc = VideoEncoder.plan(enc, true, W, H, FrameRate.FPS_30, 2_000_000, 1f);
         File file = new File(ctx.getCacheDir(), "trial_cfg" + configId + ".mp4");
@@ -154,15 +165,19 @@ public final class UndeclaredConfigTrial {
             int ce = EglDiag.takeError();
             boolean ctxOk = eglCtx != null && eglCtx != EGL14.EGL_NO_CONTEXT;
             log.append("eglCreateContext: ").append(ctxOk ? "ok" : "FAIL").append(" ").append(EglDiag.errName(ce)).append('\n');
-            if (!ctxOk) { log.append("CLOSED this attempt: no GLES3 context\n"); return; }
+            if (!ctxOk) { log.append("CLOSED this attempt: no GLES3 context\n"); return STAGE_EARLY; }
 
             mux = new MuxerSink(file.getAbsolutePath(), 0);
+            log.append("MediaFormat قبل configure:\n").append(VideoEncoder.describeFormat(VideoEncoder.buildFormat(cfgEnc, meta)));
             try {
                 ve = new VideoEncoder(enc, cfgEnc, meta, mux);
             } catch (Throwable t) {
-                log.append("VideoEncoder configure FAIL: ").append(t.getMessage()).append('\n');
+                String m = String.valueOf(t.getMessage());
+                if (!m.contains("مرحلة الفشل: VideoEncoder.configure")) log.append("مرحلة الفشل: VideoEncoder.configure\n");
+                log.append(m).append('\n');
+                log.append("eglCreateWindowSurface لم يُستدعَ في هذه المحاولة.\n");
                 log.append("CLOSED this attempt: encoder rejected Main10 surface format\n");
-                return;
+                return STAGE_CONFIGURE;
             }
             EglDiag.takeError();
             win = EGL14.eglCreateWindowSurface(dpy, cfg, ve.inputSurface, new int[]{EGL14.EGL_NONE}, 0);
@@ -172,13 +187,13 @@ public final class UndeclaredConfigTrial {
                     .append(" ").append(EglDiag.errName(we)).append(" (0x").append(Integer.toHexString(we)).append(")\n");
             if (!winOk) {
                 log.append("CLOSED this attempt: encoder Surface rejected this config (undeclared RECORDABLE)\n");
-                return;
+                return STAGE_WINDOW;
             }
             flags[0] = true;
             EglDiag.takeError();
             boolean cur = EGL14.eglMakeCurrent(dpy, win, win, eglCtx);
             log.append("eglMakeCurrent: ").append(cur ? "ok" : "FAIL").append(" ").append(EglDiag.takeErrorLine("")).append('\n');
-            if (!cur) { log.append("CLOSED this attempt: makeCurrent failed\n"); return; }
+            if (!cur) { log.append("CLOSED this attempt: makeCurrent failed\n"); return STAGE_SURFACE; }
 
             kit = new GlKit(new ShaderLoader(ctx.getAssets()));
             Tex fbo = kit.tex(cfgEnc.width, cfgEnc.height, true);
@@ -200,7 +215,7 @@ public final class UndeclaredConfigTrial {
                 int se = EglDiag.takeError();
                 log.append("  draw+swap frame ").append(f).append(": ").append(sw ? "ok" : "FAIL")
                         .append(" ").append(EglDiag.errName(se)).append('\n');
-                if (!sw) { log.append("CLOSED this attempt: swap failed\n"); return; }
+                if (!sw) { log.append("CLOSED this attempt: swap failed\n"); return STAGE_SURFACE; }
                 drawn++;
             }
             log.append("frames drawn: ").append(drawn).append('\n');
@@ -209,7 +224,7 @@ public final class UndeclaredConfigTrial {
             log.append("encoder EOS: ").append(eos ? "ok" : "TIMEOUT").append(" encodedFrames=").append(ve.encodedFrames).append('\n');
             if (!eos || ve.encodedFrames <= 0) {
                 log.append("CLOSED this attempt: encoder produced no frames\n");
-                return;
+                return STAGE_SURFACE;
             }
             mux.stop();
             flags[1] = true;
@@ -217,6 +232,8 @@ public final class UndeclaredConfigTrial {
             inspectFile(file, cfgEnc, meta, log, flags);
         } catch (Throwable t) {
             log.append("CLOSED this attempt: ").append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append('\n');
+            // an exception before the window surface existed did not reach the surface stage
+            if (!flags[0]) return ve == null ? STAGE_EARLY : STAGE_WINDOW;
         } finally {
             if (kit != null) try { kit.release(); } catch (Throwable ignored) { }
             EGL14.eglMakeCurrent(dpy, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
@@ -226,6 +243,7 @@ public final class UndeclaredConfigTrial {
             if (mux != null) try { mux.release(); } catch (Throwable ignored) { }
             file.delete();
         }
+        return STAGE_SURFACE;
     }
 
     private static void inspectFile(File file, EncodeConfig cfgEnc, HdrMetadata meta, StringBuilder log, boolean[] flags) throws Exception {
