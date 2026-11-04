@@ -73,39 +73,84 @@ public final class TilePlan {
         return out;
     }
 
-    /** One untiled forward of a window: in is fw*fh*3, out is (4fw)*(4fh)*3, same row order. */
-    public interface Net { void forward(float[] window, int fw, int fh, float[] hr); }
+    /** Floats of the window buffer (RGB) the run needs: the largest context window. */
+    public long windowFloats() { return 3L * maxWindowW() * maxWindowH(); }
+
+    /** Floats of the core buffer (RGBA, x4) the run needs: the largest tile core. */
+    public long coreFloats() { return 4L * (4L * Math.min(t, w)) * (4L * Math.min(t, h)); }
+
+    /**
+     * One window forward that writes only its core: (4cw)x(4ch) RGBA floats, rows in the window's
+     * order, into core (position 0). The window holds fw*fh RGB floats.
+     */
+    public interface CoreNet {
+        void forwardCore(java.nio.FloatBuffer window, int fw, int fh, int offX, int offY, int cw, int ch, java.nio.FloatBuffer core);
+    }
+
+    /** Receives each tile's core, already cropped: its place in the x4 output is (4 t.x0, 4 t.y0), size 4cw x 4ch. */
+    public interface Sink { void core(Tile t, java.nio.FloatBuffer core); }
 
     /** Called between tiles (export uses it to keep the encoder fed). */
     public interface Between { void between(int done, int total); }
 
-    /** Gather and crop+merge time, the parts of tiling that are not the network. */
-    public static final class Stats { public long gatherNs, mergeNs; }
+    /** Gather, network and sink time. */
+    public static final class Stats { public long gatherNs, netNs, sinkNs; }
 
     /**
-     * The tiled x4 forward used by export. out must hold (4w)*(4h)*3 floats.
-     * Each core's x4 pixels are written exactly once.
+     * The tiled x4 forward used by export and by the checks. src has srcChannels floats per pixel
+     * (3 = RGB, 4 = RGBA straight from a GL read; alpha is ignored). window and core are reused for
+     * every tile and must hold windowFloats() and coreFloats(). No x4 frame is built here: each core
+     * goes to the sink as soon as it exists.
      */
-    public void run(float[] rgb, Net net, float[] out, Stats st, Between gate) {
-        int mw = maxWindowW(), mh = maxWindowH(), W4 = w * 4;
-        float[] window = new float[mw * mh * 3];
-        float[] hr = new float[mw * 4 * mh * 4 * 3];
+    public void run(float[] src, int srcChannels, java.nio.FloatBuffer window, java.nio.FloatBuffer core,
+                    CoreNet net, Sink sink, Stats st, Between gate) {
+        if (src.length < (long) w * h * srcChannels) throw new IllegalArgumentException("source " + src.length);
+        if (window.capacity() < windowFloats() || core.capacity() < coreFloats())
+            throw new IllegalArgumentException("buffers " + window.capacity() + "/" + core.capacity());
+        float[] row = new float[maxWindowW() * 3];
         Tile t = new Tile();
         int n = count();
         for (int i = 0; i < n; i++) {
             tile(i, t);
             long c0 = System.nanoTime();
-            for (int wy = 0; wy < t.fh; wy++)
-                System.arraycopy(rgb, ((t.cy0 + wy) * w + t.cx0) * 3, window, wy * t.fw * 3, t.fw * 3);
+            for (int wy = 0; wy < t.fh; wy++) {
+                int s0 = ((t.cy0 + wy) * w + t.cx0) * srcChannels;
+                if (srcChannels == 3) System.arraycopy(src, s0, row, 0, t.fw * 3);
+                else for (int x = 0; x < t.fw; x++) {
+                    int s = s0 + x * srcChannels;
+                    row[x * 3] = src[s]; row[x * 3 + 1] = src[s + 1]; row[x * 3 + 2] = src[s + 2];
+                }
+                window.position(wy * t.fw * 3);
+                window.put(row, 0, t.fw * 3);
+            }
+            window.position(0);
+            core.position(0);
             long c1 = System.nanoTime();
-            net.forward(window, t.fw, t.fh, hr);
-            long m0 = System.nanoTime();
-            int hw = t.fw * 4, ox = t.offX() * 4, oy = t.offY() * 4;
-            for (int y = 0; y < t.ch * 4; y++)
-                System.arraycopy(hr, ((oy + y) * hw + ox) * 3, out, ((t.y0 * 4 + y) * W4 + t.x0 * 4) * 3, t.cw * 4 * 3);
-            long m1 = System.nanoTime();
-            if (st != null) { st.gatherNs += c1 - c0; st.mergeNs += m1 - m0; }
+            net.forwardCore(window, t.fw, t.fh, t.offX(), t.offY(), t.cw, t.ch, core);
+            long c2 = System.nanoTime();
+            core.position(0);
+            sink.core(t, core);
+            long c3 = System.nanoTime();
+            if (st != null) { st.gatherNs += c1 - c0; st.netNs += c2 - c1; st.sinkNs += c3 - c2; }
             if (gate != null && i + 1 < n) gate.between(i + 1, n);
         }
+    }
+
+    /** Sink that writes cores into an RGB x4 array (checks and tests; not for full frames in export). */
+    public static Sink rgbArraySink(final float[] out, final int w) {
+        return new Sink() {
+            @Override public void core(Tile t, java.nio.FloatBuffer core) {
+                int W4 = w * 4, cw4 = t.cw * 4;
+                for (int y = 0; y < t.ch * 4; y++) {
+                    int d = ((t.y0 * 4 + y) * W4 + t.x0 * 4) * 3;
+                    int s = y * cw4 * 4;
+                    for (int x = 0; x < cw4; x++) {
+                        out[d + x * 3] = core.get(s + x * 4);
+                        out[d + x * 3 + 1] = core.get(s + x * 4 + 1);
+                        out[d + x * 3 + 2] = core.get(s + x * 4 + 2);
+                    }
+                }
+            }
+        };
     }
 }

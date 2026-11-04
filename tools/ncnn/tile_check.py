@@ -119,6 +119,44 @@ def tiled_new(net, rgb, w, h, T):
     return out.reshape(-1)
 
 
+def forward_core(net, win, fw, fh, offX, offY, cw, ch):
+    """Port of nativeForwardCore's index math: window bottom-up RGB -> core only, RGBA x4, bottom-up rows."""
+    img = win.reshape(fh, fw, 3)[::-1].transpose(2, 0, 1).copy()  # top-down CHW, as the C++ fills ncnn's Mat
+    ex = net.create_extractor()
+    ex.input("data", ncnn.Mat(img))
+    rc, conv = ex.extract("c33")
+    assert rc == 0
+    conv = np.array(conv).reshape(48, fh, fw)
+    out = np.zeros((ch * 4, cw * 4, 4), np.float32)
+    out[..., 3] = 1
+    for wy in range(offY, offY + ch):          # bottom-up window row
+        yt = fh - 1 - wy                        # top-down
+        xs = np.arange(offX, offX + cw)
+        for sy in range(4):
+            oy = (wy - offY) * 4 + (3 - sy)
+            for c in range(3):
+                base = np.clip(img[c, yt, xs], 0, 1)
+                for sx in range(4):
+                    out[oy, (xs - offX) * 4 + sx, c] = conv[c * 16 + sy * 4 + sx, yt, xs] + base
+    return out
+
+
+def tiled_core(net, rgb, w, h, T):
+    """NcnnSr.forwardTo with the C++ core shuffle, cores placed at (4 x0, 4 y0) like glTexSubImage2D."""
+    F = T + 2 * P
+    out = np.zeros((h * 4, w * 4, 3), np.float32)
+    src = rgb.reshape(h, w, 3)
+    for y0 in range(0, h, T):
+        for x0 in range(0, w, T):
+            cw, ch = min(T, w - x0), min(T, h - y0)
+            cx0, fw = context(x0, cw, w, F)
+            cy0, fh = context(y0, ch, h, F)
+            win = np.ascontiguousarray(src[cy0:cy0 + fh, cx0:cx0 + fw]).reshape(-1)
+            core = forward_core(net, win, fw, fh, x0 - cx0, y0 - cy0, cw, ch)
+            out[y0 * 4:(y0 + ch) * 4, x0 * 4:(x0 + cw) * 4] = core[..., :3]
+    return out.reshape(-1)
+
+
 def masks(w, h, T):
     ys, xs = np.mgrid[0:h * 4, 0:w * 4] // 4
     ex = (xs < EDGE) | (xs >= w - EDGE)
@@ -203,6 +241,8 @@ def main():
                         report("OLD tiled T=%d (%d tiles) vs direct" % (T, nt), old, direct, w, h, T)
                     new = tiled_new(net, rgb, w, h, T)
                     fails += not report("NEW tiled T=%d (%d tiles) vs direct" % (T, nt), new, direct, w, h, T)
+                    core = tiled_core(net, rgb, w, h, T)
+                    fails += not report("CORE path T=%d (2.3.5 export) vs direct" % T, core, direct, w, h, T)
     print("RESULT", "PASS" if fails == 0 else "FAIL %d" % fails)
     return 1 if fails else 0
 

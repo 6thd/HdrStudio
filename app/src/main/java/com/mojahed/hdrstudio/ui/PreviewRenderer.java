@@ -72,10 +72,11 @@ public final class PreviewRenderer {
             int visW = full ? outW : g.visW, visH = full ? outH : g.visH;
             MemoryBudget.Plan mem = MemoryBudget.preview(src.width, src.height, ten,
                     procW, procH, procOutW, procOutH, !full, p.ai, p.aiWorkScale,
-                    visW, visH, hdrOut, memAvail, memTotal, p.ai && p.aiNcnn);
+                    visW, visH, hdrOut, memAvail, memTotal, p.ai && p.aiNcnn,
+                    p.ai && p.aiNcnn ? MemoryBudget.JavaHeap.current() : MemoryBudget.JavaHeap.UNLIMITED);
             r.mem = mem;
             if (!mem.fits)
-                throw new IllegalStateException("المعاينة فوق الميزانية المحافظة.\n" + mem.describe());
+                throw new IllegalStateException("المعاينة لا تتسع للذاكرة: " + mem.reason + "\n" + mem.describe());
             if (p.ai) p.aiTile = mem.tile;
 
             egl = new Egl(false);

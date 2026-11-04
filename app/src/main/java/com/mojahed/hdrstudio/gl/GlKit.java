@@ -107,6 +107,14 @@ public final class GlKit {
         GlException.check("upload " + t.w + "x" + t.h);
     }
 
+    /** RGBA float data into a sub-rectangle of an RGBA16F texture (one ncnn tile core). */
+    public void uploadRegion(Tex t, int x, int y, int w, int h, FloatBuffer data) {
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, t.id);
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4);
+        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, x, y, w, h, GLES20.GL_RGBA, GLES20.GL_FLOAT, data);
+        GlException.check("uploadRegion " + w + "x" + h + " at " + x + "," + y);
+    }
+
     /** RGBA8 texture (preview read-back). */
     public Tex tex8(int w, int h) {
         int[] a = new int[1];

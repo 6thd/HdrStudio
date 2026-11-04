@@ -17,3 +17,16 @@ Decisions recorded with this result:
   and the work moves to measuring its practical benefit; FP16 is not chased further.
 
 The full report text was not attached to the repository; the per-region numbers live in the phone report.
+
+----------------------------------------------------------------
+2.3.4-test on the phone (2026-11-04, report in NCNN_PHONE_2.3.4.txt, CI run #3 build db59981)
+Accepted, per mode, against the unchanged limits (maxAbs <= 0.02, PSNR >= 40 dB per region):
+- CPU FP32: tiled vs direct <= 1e-5; direct vs NumPy 5e-6.
+- Vulkan FP32: effective options = requested (no FP16 anywhere); tiled vs direct <= 2e-6; vs CPU FP32 <= 9e-6.
+- Vulkan FP16 storage + FP32 arithmetic (middle mode): effective = requested; vs NumPy 0.0026 / 66 dB;
+  tiled vs direct <= 0.0078 / 64.8 dB; vs CPU FP32 <= 0.0056 / 65.4 dB. PASS (its tiled-vs-direct gap is FP16 storage
+  rounding on different window sizes, inside the limits).
+- Maleoon 935F reports bug_implicit_fp16_arith=0.
+Weights, tile geometry and limits stay as they are.
+The timing did not run: OutOfMemoryError allocating 132,710,419 bytes (the x4 RGBA frame for the GL upload),
+Java growth limit 536,870,912. Fixed in 2.3.5 (per-tile upload from native buffers, Java heap as its own limit).

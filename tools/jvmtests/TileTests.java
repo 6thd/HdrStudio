@@ -4,7 +4,7 @@ import java.util.Locale;
 import java.util.Random;
 
 /**
- * The ncnn export tiling (TilePlan.run, called by NcnnSr.forward) against an untiled forward
+ * The ncnn export tiling (TilePlan.run with per-tile cores into a sink, as NcnnSr.forwardTo and export run it) against an untiled forward
  * of a network with the SRVGGNetCompact x4 shape: 34 convolutions 3x3 with per-layer zero
  * padding, bias and PReLU, PixelShuffle(4) and a clamped nearest x4 residual. Few channels so
  * it runs on the JVM; the receptive radius (34) and the border behaviour are the real ones.
@@ -31,8 +31,10 @@ public class TileTests {
         }
     }
 
+    interface FullNet { void forward(float[] in, int w, int h, float[] hr); }
+
     /** Untiled forward. in: w*h*3 interleaved, row order kept; out: 4w*4h*3. */
-    static final TilePlan.Net NET = new TilePlan.Net() {
+    static final FullNet NET = new FullNet() {
         @Override public void forward(float[] in, int w, int h, float[] hr) {
             int n = w * h;
             float[] x = new float[3 * n];
@@ -78,9 +80,30 @@ public class TileTests {
 
     static float[] direct(float[] in, int w, int h) { float[] o = new float[w * h * 48]; NET.forward(in, w, h, o); return o; }
 
-    static float[] tiled(float[] in, int w, int h, int t) {
+    /** The native contract of forwardCore: run the window, write only its core as RGBA x4 (rows in window order). */
+    static final TilePlan.CoreNet CORE = new TilePlan.CoreNet() {
+        @Override public void forwardCore(java.nio.FloatBuffer window, int fw, int fh, int offX, int offY, int cw, int ch, java.nio.FloatBuffer core) {
+            float[] win = new float[fw * fh * 3];
+            window.position(0); window.get(win); window.position(0);
+            float[] hr = new float[fw * fh * 48];
+            NET.forward(win, fw, fh, hr);
+            int W4 = fw * 4, cw4 = cw * 4;
+            for (int y = 0; y < ch * 4; y++)
+                for (int x = 0; x < cw4; x++) {
+                    int s = ((offY * 4 + y) * W4 + offX * 4 + x) * 3, d = (y * cw4 + x) * 4;
+                    core.put(d, hr[s]); core.put(d + 1, hr[s + 1]); core.put(d + 2, hr[s + 2]); core.put(d + 3, 1f);
+                }
+        }
+    };
+
+    /** Export's path: TilePlan.run with reused window/core buffers and a sink; source RGB (3) or RGBA (4). */
+    static float[] tiled(float[] in, int w, int h, int t, int channels) {
+        float[] src = in;
+        if (channels == 4) { src = new float[w * h * 4]; for (int i = 0; i < w * h; i++) { src[i * 4] = in[i * 3]; src[i * 4 + 1] = in[i * 3 + 1]; src[i * 4 + 2] = in[i * 3 + 2]; src[i * 4 + 3] = 0.5f; } }
+        TilePlan p = new TilePlan(w, h, t, 36);
         float[] o = new float[w * h * 48];
-        new TilePlan(w, h, t, 36).run(in, NET, o, null, null);
+        p.run(src, channels, java.nio.FloatBuffer.allocate((int) p.windowFloats()), java.nio.FloatBuffer.allocate((int) p.coreFloats()),
+                CORE, TilePlan.rgbArraySink(o, w), null, null);
         return o;
     }
 
@@ -137,12 +160,15 @@ public class TileTests {
             int w = c[0], h = c[1], t = c[2];
             float[] in = image(w, h, w * 1000L + h);
             float[] d = direct(in, w, h);
-            float[] nt = tiled(in, w, h, t);
+            float[] nt = tiled(in, w, h, t, 3);
+            float[] nt4 = tiled(in, w, h, t, 4);
             float[] old = blackMargin(in, w, h, t);
             TilePlan p = new TilePlan(w, h, t, 36);
             double mNew = maxAbs(nt, d), mOld = maxAbs(old, d);
             check(String.format(Locale.US, "tiled_equals_direct_%dx%d_T%d", w, h, t), mNew == 0.0,
                     String.format(Locale.US, "%d tiles, window <= %dx%d, maxAbs %.3g (black-margin tiling: %.3g)", p.count(), p.maxWindowW(), p.maxWindowH(), mNew, mOld));
+            check(String.format(Locale.US, "tiled_rgba_source_equals_direct_%dx%d_T%d", w, h, t), maxAbs(nt4, d) == 0.0,
+                    String.format(Locale.US, "source straight from a GL read (RGBA), maxAbs %.3g", maxAbs(nt4, d)));
             check(String.format(Locale.US, "black_margin_tiling_detected_%dx%d_T%d", w, h, t), mOld > 1e-3,
                     String.format(Locale.US, "maxAbs %.3g", mOld));
         }

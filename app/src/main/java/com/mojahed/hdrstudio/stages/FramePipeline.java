@@ -3,6 +3,7 @@ package com.mojahed.hdrstudio.stages;
 import android.opengl.GLES20;
 
 import com.mojahed.hdrstudio.ai.NcnnSr;
+import com.mojahed.hdrstudio.ai.TilePlan;
 import com.mojahed.hdrstudio.ai.SrEngine;
 import com.mojahed.hdrstudio.gl.GlKit;
 import com.mojahed.hdrstudio.gl.Tex;
@@ -53,6 +54,8 @@ public final class FramePipeline {
     private final Tex[] mv = new Tex[4];
     private Tex mvMed, mvFinal;
     private Tex tmpH, o1, o2, lrTmp, lr, aiOut;
+    /** ncnn x4 result when it is not the output size (resampled into aiOut); kept and reused. */
+    private Tex srBig;
     private TileGate gate;
     private Region region;
     private final Tex fin;
@@ -199,31 +202,31 @@ public final class FramePipeline {
             long tr0 = System.nanoTime();
             float[] px = k.read(lrIn);
             info.aiReadMs = (System.nanoTime() - tr0) / 1000000;
-            int n = lrIn.w * lrIn.h;
-            float[] rgb = new float[n * 3];
-            for (int i = 0; i < n; i++) { rgb[i * 3] = px[i * 4]; rgb[i * 3 + 1] = px[i * 4 + 1]; rgb[i * 3 + 2] = px[i * 4 + 2]; }
-            NcnnSr.Forward f = ncnn.forward(rgb, lrIn.w, lrIn.h, p.aiTile, gate);
+            int hrW = lrIn.w * 4, hrH = lrIn.h * 4;
+            // each tile's x4 core goes straight into its place in a GL texture: no x4 frame in Java memory
+            boolean direct = aiOut.w == hrW && aiOut.h == hrH;
+            if (!direct && (srBig == null || srBig.w != hrW || srBig.h != hrH)) {
+                if (srBig != null) k.delete(srBig);
+                srBig = k.tex(hrW, hrH, true);
+            }
+            final Tex dst = direct ? aiOut : srBig;
+            NcnnSr.Forward f = ncnn.forwardTo(px, 4, lrIn.w, lrIn.h, p.aiTile, new TilePlan.Sink() {
+                @Override public void core(TilePlan.Tile t, FloatBuffer core) {
+                    k.uploadRegion(dst, t.x0 * 4, t.y0 * 4, t.cw * 4, t.ch * 4, core);
+                }
+            }, gate);
             info.aiExtractMs = f.extractNs / 1_000_000L;
             info.tiles = f.tiles;
             if (!f.fullVulkan) throw new IllegalStateException("ncnn ليس Vulkan بالكامل: " + ncnn.reason);
-            int hrW = lrIn.w * 4, hrH = lrIn.h * 4;
-            float[] rgba = new float[hrW * hrH * 4];
-            for (int i = 0; i < hrW * hrH; i++) { rgba[i * 4] = f.rgb[i * 3]; rgba[i * 4 + 1] = f.rgb[i * 3 + 1]; rgba[i * 4 + 2] = f.rgb[i * 3 + 2]; rgba[i * 4 + 3] = 1f; }
-            FloatBuffer fb = ByteBuffer.allocateDirect(rgba.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
-            fb.put(rgba).position(0);
-            long tu = System.nanoTime();
-            if (aiOut.w == hrW && aiOut.h == hrH) k.upload(aiOut, fb);
-            else {
-                Tex big = k.tex(hrW, hrH, true, fb);
+            if (!direct) {
                 m = U();
-                m.put("uSR", big); m.put("uSrOrigin", new float[]{0f, 0f});
+                m.put("uSR", srBig); m.put("uSrOrigin", new float[]{0f, 0f});
                 m.put("uScale", new float[]{aiOut.w / (float) hrW, aiOut.h / (float) hrH});
                 m.put("uSrValid", new int[]{hrW, hrH});
                 k.run("sr_resample.frag", aiOut, m);
-                k.delete(big);
             }
             GLES20.glFinish();
-            info.aiUploadMs = (System.nanoTime() - tu) / 1000000;
+            info.aiUploadMs = f.mergeNs / 1_000_000L;   // per-tile GL uploads of the cores (inside the tiled run)
             info.aiMs = (System.nanoTime() - ta) / 1000000;
             Tex base = cur;
             if (resized) { resize(cur, o1, tmpH); base = o1; }
@@ -321,7 +324,7 @@ public final class FramePipeline {
     }
 
     public void release() {
-        Tex[] all = {a, b, zero, mvMed, mvFinal, tmpH, o1, o2, lrTmp, lr, aiOut, fin, hist[0], hist[1]};
+        Tex[] all = {a, b, zero, mvMed, mvFinal, tmpH, o1, o2, lrTmp, lr, aiOut, srBig, fin, hist[0], hist[1]};
         for (Tex t : all) k.delete(t);
         for (int i = 0; i < 4; i++) { k.delete(lv[i]); k.delete(lvPrev[i]); k.delete(mv[i]); }
     }

@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -292,6 +293,89 @@ JNIEXPORT jint JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeLayer(
     for (int c = 0; c < m.c; c++) std::memcpy(flat.data() + (size_t)c * m.h * m.w, (const float*)m.channel(c), sizeof(float) * m.h * m.w);
     e->SetFloatArrayRegion(outArr, 0, n, flat.data());
     return n;
+}
+
+// Buffers outside the Java heap for the tiled path: the context window (RGB) and one tile's x4 core (RGBA).
+// Counted in MemoryBudget as native memory. Freed by nativeFreeDirect.
+JNIEXPORT jobject JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeAllocDirect(JNIEnv* e, jclass, jlong bytes) {
+    if (bytes <= 0) return nullptr;
+    void* p = std::calloc((size_t)bytes, 1);
+    if (!p) { set_err("native alloc of " + std::to_string((long long)bytes) + " bytes failed"); return nullptr; }
+    return e->NewDirectByteBuffer(p, bytes);
+}
+
+JNIEXPORT void JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeFreeDirect(JNIEnv* e, jclass, jobject buf) {
+    if (buf) std::free(e->GetDirectBufferAddress(buf));
+}
+
+// One context window -> only its core, x4, RGBA float, written into a direct buffer of (4cw)*(4ch)*4 floats.
+// window: direct buffer, RGB float, fw*fh, row 0 = bottom (GL order). offX/offY: core offset inside the window
+// in LR pixels (bottom-up rows), cw/ch: core size. Output rows are bottom-up too, so the buffer can go straight to
+// glTexSubImage2D at (x0*4, y0*4). Same arithmetic as shuffle_residual (residual clamped to [0,1]).
+JNIEXPORT jint JNICALL Java_com_mojahed_hdrstudio_ai_NcnnSr_nativeForwardCore(
+        JNIEnv* e, jclass, jlong handle, jobject winBuf, jint fw, jint fh, jint offX, jint offY, jint cw, jint ch,
+        jobject outBuf, jlongArray phaseNs) {
+    NetHolder* h = reinterpret_cast<NetHolder*>(handle);
+    if (!h || fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0 || offX < 0 || offY < 0 || offX + cw > fw || offY + ch > fh) {
+        set_err("bad forwardCore args"); return -1;
+    }
+    const float* win = static_cast<const float*>(e->GetDirectBufferAddress(winBuf));
+    float* out = static_cast<float*>(e->GetDirectBufferAddress(outBuf));
+    if (!win || !out) { set_err("forwardCore needs direct buffers"); return -2; }
+    if (e->GetDirectBufferCapacity(winBuf) < (jlong)fw * fh * 3 * 4 || e->GetDirectBufferCapacity(outBuf) < (jlong)cw * ch * 16 * 4 * 4) {
+        set_err("forwardCore buffer size"); return -2;
+    }
+    auto t0 = std::chrono::steady_clock::now();
+    ncnn::Mat input(fw, fh, 3);
+    for (int c = 0; c < 3; c++) {
+        float* dst = input.channel(c);
+        for (int y = 0; y < fh; y++) {
+            const int gy = fh - 1 - y;
+            for (int x = 0; x < fw; x++) dst[y * fw + x] = win[(gy * fw + x) * 3 + c];
+        }
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    ncnn::Mat conv;
+    {
+        ncnn::Extractor ex = h->net.create_extractor();
+        ex.set_light_mode(true);
+        if (ex.input("data", input) != 0) { set_err("extractor.input failed"); return -3; }
+        int er = ex.extract("c33", conv);
+        if (er == 0 && conv.elempack != 1) { ncnn::Mat u; ncnn::convert_packing(conv, u, 1, h->net.opt); conv = u; }
+        if (er != 0 || conv.c != 48 || conv.elemsize != 4 || conv.w != fw || conv.h != fh) {
+            set_err("extract c33 failed rc=" + std::to_string(er) + " c=" + std::to_string(conv.c) + " esize=" + std::to_string(conv.elemsize));
+            return -4;
+        }
+    }
+    auto t2 = std::chrono::steady_clock::now();
+    const int W4 = cw * 4;
+    for (int wy = offY; wy < offY + ch; wy++) {          // bottom-up window row
+        const int yt = fh - 1 - wy;                       // the same row, top-down (ncnn)
+        for (int sy = 0; sy < 4; sy++) {                  // sub-row, top-down
+            const int oy = (wy - offY) * 4 + (3 - sy);    // output row, bottom-up
+            float* row = out + (size_t)oy * W4 * 4;
+            for (int x = offX; x < offX + cw; x++) {
+                for (int c = 0; c < 3; c++) {
+                    float base = input.channel(c)[yt * fw + x];
+                    base = base < 0.f ? 0.f : (base > 1.f ? 1.f : base);
+                    for (int sx = 0; sx < 4; sx++) {
+                        const int ox = (x - offX) * 4 + sx;
+                        row[ox * 4 + c] = conv.channel(c * 16 + sy * 4 + sx)[yt * fw + x] + base;
+                    }
+                }
+                for (int sx = 0; sx < 4; sx++) row[((x - offX) * 4 + sx) * 4 + 3] = 1.f;
+            }
+        }
+    }
+    auto t3 = std::chrono::steady_clock::now();
+    if (phaseNs && e->GetArrayLength(phaseNs) >= 3) {
+        jlong ph[3];
+        ph[0] = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        ph[1] = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+        ph[2] = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+        e->SetLongArrayRegion(phaseNs, 0, 3, ph);
+    }
+    return h->full_vulkan ? 1 : 2;
 }
 
 } // extern C

@@ -76,8 +76,10 @@ public final class NcnnSr {
         public int w, h;
         /** packNs packs the CPU mat. extractNs is extract(), including its internal transfer and sync, not GPU compute alone. */
         public long packNs, extractNs, shuffleNs;
-        /** tileCopyNs gathers each context window; mergeNs crops each x4 core into the output. */
+        /** tileCopyNs gathers each context window; mergeNs hands each cropped x4 core to its destination (GL upload in export). */
         public long tileCopyNs, mergeNs;
+        /** Native window + core buffer bytes used (outside the Java heap, reused across frames). */
+        public long nativeBufferBytes;
         public int tiles;
         public boolean fullVulkan;
     }
@@ -122,7 +124,43 @@ public final class NcnnSr {
         return new NcnnSr(o, h, nativeFullVulkan(h), device, nativeLastError(), nativeOptions(h), ms);
     }
 
-    public void close() { if (handle != 0) nativeDestroy(handle); }
+    public void close() {
+        freeBuffers();
+        if (handle != 0) nativeDestroy(handle);
+    }
+
+    // Window (RGB) and core (RGBA x4) buffers for the tiled path. Native memory, not Java heap;
+    // allocated for the largest tile of the current plan and reused for every tile and frame.
+    private java.nio.ByteBuffer winBuf, coreBuf;
+    private java.nio.FloatBuffer winF, coreF;
+
+    /** Bytes of the reusable native buffers a tiled run of this size and tile needs. */
+    public static long bufferBytes(int w, int h, int tileCore) {
+        TilePlan p = new TilePlan(w, h, tileCore, P);
+        return 4L * (p.windowFloats() + p.coreFloats());
+    }
+
+    private void ensureBuffers(TilePlan plan) {
+        long wb = 4L * plan.windowFloats(), cb = 4L * plan.coreFloats();
+        if (winBuf == null || winBuf.capacity() < wb) {
+            if (winBuf != null) { nativeFreeDirect(winBuf); winBuf = null; winF = null; }
+            winBuf = nativeAllocDirect(wb);
+            if (winBuf == null) throw new IllegalStateException("ncnn: native window buffer of " + wb + " bytes not allocated: " + nativeLastError());
+            winF = winBuf.order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+        }
+        if (coreBuf == null || coreBuf.capacity() < cb) {
+            if (coreBuf != null) { nativeFreeDirect(coreBuf); coreBuf = null; coreF = null; }
+            coreBuf = nativeAllocDirect(cb);
+            if (coreBuf == null) throw new IllegalStateException("ncnn: native core buffer of " + cb + " bytes not allocated: " + nativeLastError());
+            coreF = coreBuf.order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+        }
+    }
+
+    /** Frees the reusable buffers (also done by close()). */
+    public void freeBuffers() {
+        if (winBuf != null) { nativeFreeDirect(winBuf); winBuf = null; winF = null; }
+        if (coreBuf != null) { nativeFreeDirect(coreBuf); coreBuf = null; coreF = null; }
+    }
 
     /** One untiled forward of the whole image (the reference the tiled path must match). */
     public Forward direct(float[] rgb, int w, int h) {
@@ -146,27 +184,39 @@ public final class NcnnSr {
      * offset comes from the window actually used. This is the path export uses.
      */
     public Forward forward(float[] rgb, int w, int h, int tileCore, final FramePipeline.TileGate gate) {
+        float[] out = new float[w * 4 * h * 4 * 3];
+        Forward f = forwardTo(rgb, 3, w, h, tileCore, TilePlan.rgbArraySink(out, w), gate);
+        f.rgb = out;
+        return f;
+    }
+
+    /**
+     * The tiled forward export uses: src is RGB (3) or RGBA straight from a GL read (4), each tile's
+     * x4 core goes to sink as soon as it is computed. No x4 frame is held here; f.rgb stays null.
+     */
+    public Forward forwardTo(float[] src, int srcChannels, int w, int h, int tileCore, TilePlan.Sink sink, final FramePipeline.TileGate gate) {
         final Forward f = new Forward();
         f.w = w * 4; f.h = h * 4;
-        f.rgb = new float[f.w * f.h * 3];
         f.fullVulkan = fullVulkan;
         if (!loaded) return f;
         TilePlan plan = new TilePlan(w, h, tileCore, P);
         f.tiles = plan.count();
+        ensureBuffers(plan);
+        f.nativeBufferBytes = winBuf.capacity() + coreBuf.capacity();
         final long[] phase = new long[3];
         TilePlan.Stats st = new TilePlan.Stats();
-        plan.run(rgb, new TilePlan.Net() {
-            @Override public void forward(float[] window, int fw, int fh, float[] hr) {
-                int rc = nativeForward(handle, window, fw, fh, hr, phase);
+        plan.run(src, srcChannels, winF, coreF, new TilePlan.CoreNet() {
+            @Override public void forwardCore(java.nio.FloatBuffer window, int fw, int fh, int offX, int offY, int cw, int ch, java.nio.FloatBuffer core) {
+                int rc = nativeForwardCore(handle, winBuf, fw, fh, offX, offY, cw, ch, coreBuf, phase);
                 if (rc < 0) throw new IllegalStateException("ncnn forward: " + nativeLastError());
                 if (rc == 2) f.fullVulkan = false;
                 f.packNs += phase[0]; f.extractNs += phase[1]; f.shuffleNs += phase[2];
             }
-        }, f.rgb, st, gate == null ? null : new TilePlan.Between() {
+        }, sink, st, gate == null ? null : new TilePlan.Between() {
             @Override public void between(int done, int total) { gate.between(done, total); }
         });
         f.tileCopyNs = st.gatherNs;
-        f.mergeNs = st.mergeNs;
+        f.mergeNs = st.sinkNs;
         return f;
     }
 
@@ -190,6 +240,9 @@ public final class NcnnSr {
     private static native long nativeCreate(byte[] model, int flags);
     private static native String nativeOptions(long handle);
     private static native int nativeLayer(long handle, float[] in, int w, int h, String blob, float[] out);
+    private static native int nativeForwardCore(long handle, java.nio.ByteBuffer window, int fw, int fh, int offX, int offY, int cw, int ch, java.nio.ByteBuffer core, long[] phaseNs);
+    private static native java.nio.ByteBuffer nativeAllocDirect(long bytes);
+    private static native void nativeFreeDirect(java.nio.ByteBuffer buf);
     private static native void nativeDestroy(long handle);
     private static native int nativeForward(long handle, float[] in, int w, int h, float[] out, long[] phaseNs);
     private static native String nativeLastError();

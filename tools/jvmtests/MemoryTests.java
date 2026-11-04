@@ -81,6 +81,26 @@ public class MemoryTests {
         System.out.println(String.format(Locale.US, "INFO v2.1 tile rule at 3.2 GB free, 4K AI+temporal: tile 512 -> %d MB total (budget %d MB); new rule -> tile %d, %d MB",
                 mb(v21Total), mb(v21.budget), v21.tile, mb(v21.total())));
         MemoryBudget.Plan glsl = MemoryBudget.plan(1920, 1080, false, 1920, 1080, false, false, true, 0.5f, 4 * GB, 8 * GB, false);
+        // 2.3.5: the ncnn path keeps no x4 frame in Java; Java heap is its own limit; the tile shrinks with memory
+        long x4Rgba = 16L * 3840 * 2160;
+        check("mem_ncnn_java_holds_no_x4_frame", MemoryBudget.ncnnJava(960, 540, 512) < x4Rgba / 2,
+                "Java " + mb(MemoryBudget.ncnnJava(960, 540, 512)) + " MB vs one x4 RGBA frame " + mb(x4Rgba) + " MB");
+        // the phone of the 2.3.4 report: growth limit 512 MB, about 280 MB in use
+        MemoryBudget.JavaHeap phone = new MemoryBudget.JavaHeap(536870912L, 285L << 20);
+        MemoryBudget.Plan ph = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, 6 * GB, 12 * GB, true, phone);
+        check("mem_ncnn_fits_2_3_4_phone_heap", ph.fits && ph.javaFits && ph.javaNeed <= phone.avail() / 2,
+                ph.describe() + " | " + phone.describe());
+        MemoryBudget.JavaHeap tiny = new MemoryBudget.JavaHeap(64L << 20, 40L << 20);
+        MemoryBudget.Plan tj = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, 6 * GB, 12 * GB, true, tiny);
+        check("mem_ncnn_java_limit_stops_before_alloc", !tj.fits && !tj.javaFits && tj.reason.contains("Java"),
+                tj.reason);
+        MemoryBudget.Plan nBig = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, 8 * GB, 12 * GB, true, phone);
+        MemoryBudget.Plan nSmall = MemoryBudget.plan(1920, 1080, false, 3840, 2160, false, false, true, 0.5f, 1700L << 20, 12 * GB, true, phone);
+        check("mem_ncnn_tile_shrinks_with_ram_not_resolution", nSmall.tile < nBig.tile && nSmall.ncnn && nBig.ncnn,
+                "8 GB free -> T=" + nBig.tile + ", 1.7 GB free -> T=" + nSmall.tile + " (work scale stays 0.5)");
+        check("mem_ncnn_counts_native_buffers", nBig.nativeNeed == MemoryBudget.ncnnNative(960, 540, nBig.tile)
+                        && nBig.aiTiles == MemoryBudget.ncnnWorkspace(nBig.tile, 960, 540) + nBig.nativeNeed,
+                "native " + mb(nBig.nativeNeed) + " MB, workspace " + mb(nBig.aiTiles - nBig.nativeNeed) + " MB");
         MemoryBudget.Plan ncnn = MemoryBudget.plan(1920, 1080, false, 1920, 1080, false, false, true, 0.5f, 4 * GB, 8 * GB, true);
         check("mem_ncnn_counts_vulkan_workspace_not_glsl_tiles",
                 ncnn.ncnn && ncnn.aiTiles != glsl.aiTiles && ncnn.aiTiles >= MemoryBudget.ncnnWorkspace(ncnn.tile)

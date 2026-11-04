@@ -23,6 +23,13 @@ public final class MemoryBudget {
         public boolean analysis;    // preview: whole-frame statistics pass is included
         /** True when aiTiles is the ncnn workspace estimate (not the GLSL tile textures). */
         public boolean ncnn;
+        /** ncnn only: Java heap the path holds at once, the heap available when planned, and whether it fits (a separate limit from RAM). */
+        public long javaNeed, javaAvail = -1;
+        public boolean javaFits = true;
+        /** ncnn only: native RAM of the tiled path (reusable buffers, ncnn CPU mats, Vulkan staging), inside aiTiles. */
+        public long nativeNeed;
+        /** Why the plan does not fit, or empty. */
+        public String reason = "";
 
         public long total() { return input + pipeline + history + aiFixed + aiTiles + scratch + cpu + decoder + encoder; }
         public long gpu() { return input + pipeline + history + aiFixed + aiTiles + scratch; }
@@ -31,7 +38,9 @@ public final class MemoryBudget {
             return String.format(Locale.US, "ذاكرة متوقعة: %d MB (GPU %d: معالجة %d · تاريخ زمني %d · AI %d%s · مفكك/مرمّز ~%d تقديراً%s) · الميزانية المحافظة %d MB%s",
                     mb(total()), mb(gpu()), mb(input + pipeline), mb(history), mb(aiFixed + aiTiles), tile > 0 ? " بلاطة " + tile : "",
                     mb(decoder + encoder), cpu > 0 ? " · صور " + mb(cpu) : "",
-                    mb(budget), (ncnn ? " · ncnn: مساحة العمل وتكرار الأوزان ونقل CPU تقدير" : "") + (fits ? "" : " · فوق الميزانية المحافظة — لن يُشغَّل"));
+                    mb(budget), (ncnn ? String.format(Locale.US, " · ncnn: GPU/مساحة عمل %d + native %d MB تقدير · Java %d من المتاح %s MB",
+                            mb(aiTiles - nativeNeed), mb(nativeNeed), mb(javaNeed), javaAvail < 0 ? "غير محدد" : String.valueOf(mb(javaAvail))) : "")
+                            + (fits ? "" : " · لا يتسع — لن يُشغَّل: " + reason));
         }
     }
 
@@ -88,6 +97,53 @@ public final class MemoryBudget {
         return in + feat + out + (64L << 20);
     }
 
+    /** The Java heap limit and use at planning time. UNLIMITED leaves the Java check out (JVM tests, GLSL). */
+    public static final class JavaHeap {
+        public static final JavaHeap UNLIMITED = new JavaHeap(Long.MAX_VALUE, 0);
+        public final long max, used;
+        public JavaHeap(long max, long used) { this.max = max; this.used = used; }
+        public long avail() { return max == Long.MAX_VALUE ? Long.MAX_VALUE : Math.max(0, max - used); }
+        /** This process now: Runtime.maxMemory() is the growth limit (largeHeap is not assumed). */
+        public static JavaHeap current() {
+            Runtime r = Runtime.getRuntime();
+            return new JavaHeap(r.maxMemory(), r.totalMemory() - r.freeMemory());
+        }
+        public String describe() {
+            return max == Long.MAX_VALUE ? "Java: غير محدد" : String.format(Locale.US, "Java: الحد %d MB · المستخدم %d MB · المتاح %d MB", mb(max), mb(used), mb(avail()));
+        }
+    }
+
+    /** Share of the free Java heap the ncnn path may plan to hold (the rest is for the app and GC headroom). */
+    public static final int JAVA_SHARE_PERCENT = 50;
+
+    /**
+     * Java heap the ncnn path holds at once per frame: GlKit.read's float[] of the RGBA network input and its
+     * direct staging buffer (on ART a direct ByteBuffer lives in the Java heap), plus one window row.
+     * No x4 frame: each tile core goes from native memory straight into the GL texture.
+     */
+    public static long ncnnJava(int lw, int lh, int t) {
+        return 16L * lw * lh * 2 + 12L * Math.min(t + 2L * SR_PAD, lw) + 4096;
+    }
+
+    /**
+     * Native RAM of the ncnn tiled path for tile t on an lw x lh input: the reusable window (RGB) and core
+     * (RGBA x4) buffers, ncnn's CPU input Mat and its 48-channel c33 download, and the same two again as
+     * Vulkan host-visible staging (assumed, not measured). JNI copies: none, the buffers are direct.
+     */
+    public static long ncnnNative(int lw, int lh, int t) {
+        long fw = Math.min(t + 2L * SR_PAD, lw), fh = Math.min(t + 2L * SR_PAD, lh);
+        long window = 12L * fw * fh;
+        long core = 16L * (4L * Math.min(t, lw)) * (4L * Math.min(t, lh));
+        long mats = 12L * fw * fh + 4L * 48 * fw * fh;
+        return window + core + 2 * mats;
+    }
+
+    /** ncnn GPU workspace for the real window of an lw x lh input (two 64-channel FP32 blobs, input, c33), + 64 MB driver slack. */
+    public static long ncnnWorkspace(int t, int lw, int lh) {
+        long fw = Math.min(t + 2L * SR_PAD, lw), fh = Math.min(t + 2L * SR_PAD, lh);
+        return 4L * fw * fh * (3 + 64 * 2 + 48) + (64L << 20);
+    }
+
     public static long decoderEstimate(int w, int h, boolean tenBit) { return 14L * w * h * 3 / 2 * (tenBit ? 2 : 1); }
     public static long encoderEstimate(int w, int h, boolean tenBit) { return 10L * w * h * 3 / 2 * (tenBit ? 2 : 1); }
 
@@ -103,6 +159,12 @@ public final class MemoryBudget {
 
     public static Plan plan(int srcW, int srcH, boolean srcTenBit, int outW, int outH, boolean outTenBit,
                             boolean temporal, boolean ai, float aiWorkScale, long memAvail, long memTotal, boolean ncnn) {
+        return plan(srcW, srcH, srcTenBit, outW, outH, outTenBit, temporal, ai, aiWorkScale, memAvail, memTotal, ncnn, JavaHeap.UNLIMITED);
+    }
+
+    /** As above, with the Java heap as its own limit for the ncnn path (pass JavaHeap.current() on the device). */
+    public static Plan plan(int srcW, int srcH, boolean srcTenBit, int outW, int outH, boolean outTenBit,
+                            boolean temporal, boolean ai, float aiWorkScale, long memAvail, long memTotal, boolean ncnn, JavaHeap java) {
         Plan p = new Plan();
         p.input = tex(srcW, srcH);
         p.pipeline = pipeline(srcW, srcH, outW, outH, temporal, ai, aiWorkScale);
@@ -113,14 +175,16 @@ public final class MemoryBudget {
             p.cpu += transferBytes(srcW, srcH, aiWorkScale);
             p.scratch += ncnnResampleTex(srcW, srcH, aiWorkScale, outW, outH);
         }
-        chooseTile(p, ai, memAvail, memTotal, ncnn);
+        chooseTile(p, ai, memAvail, memTotal, ncnn, lw(srcW, aiWorkScale), lw(srcH, aiWorkScale), java);
         return p;
     }
 
-    /** RGBA32F download of the network input plus RGBA32F upload of the ×4 result. CPU, not GPU. */
+    static int lw(int size, float aiWorkScale) { return Math.max(8, Math.round(size * aiWorkScale)); }
+
+    /** RGBA32F download of the network input (GlKit.read: float[] + staging). The x4 result is uploaded per tile from native memory. */
     public static long transferBytes(int srcW, int srcH, float aiWorkScale) {
         int lw = Math.max(8, Math.round(srcW * aiWorkScale)), lh = Math.max(8, Math.round(srcH * aiWorkScale));
-        return 16L * lw * lh + 16L * lw * 4L * lh * 4L;
+        return 16L * lw * lh * 2;
     }
 
     /** Extra GL texture when the ×4 result is not already the output size. 0 when it is. */
@@ -150,6 +214,15 @@ public final class MemoryBudget {
                                boolean wantAnalysis, boolean ai, float aiWorkScale,
                                int visW, int visH, boolean hdrDisplay,
                                long memAvail, long memTotal, boolean ncnn) {
+        return preview(srcW, srcH, srcTenBit, procW, procH, procOutW, procOutH, wantAnalysis, ai, aiWorkScale,
+                visW, visH, hdrDisplay, memAvail, memTotal, ncnn, JavaHeap.UNLIMITED);
+    }
+
+    public static Plan preview(int srcW, int srcH, boolean srcTenBit,
+                               int procW, int procH, int procOutW, int procOutH,
+                               boolean wantAnalysis, boolean ai, float aiWorkScale,
+                               int visW, int visH, boolean hdrDisplay,
+                               long memAvail, long memTotal, boolean ncnn, JavaHeap java) {
         Plan p = new Plan();
         p.input = tex(srcW, srcH);
         p.decoder = decoderEstimate(srcW, srcH, srcTenBit) * 4 / 14;   // a seek holds fewer buffers than a long export
@@ -164,7 +237,7 @@ public final class MemoryBudget {
             p.cpu += transferBytes(procW, procH, aiWorkScale);
             p.scratch += ncnnResampleTex(procW, procH, aiWorkScale, procOutW, procOutH);
         }
-        chooseTile(p, ai, memAvail, memTotal, ncnn);
+        chooseTile(p, ai, memAvail, memTotal, ncnn, lw(procW, aiWorkScale), lw(procH, aiWorkScale), java);
         p.analysis = false;
         if (wantAnalysis && analysisPipe > 0) {
             long saved = p.pipeline;
@@ -173,25 +246,42 @@ public final class MemoryBudget {
             else p.pipeline = saved;   // drop whole-frame statistics so the crop itself can still run
         }
         p.withinBudget = p.total() <= p.budget;
-        p.fits = p.withinBudget;
+        p.fits = p.withinBudget && p.javaFits;
         return p;
     }
 
-    /** Conservative budget is the operating limit. 85% of free RAM is recorded, not a second gate. */
-    static void chooseTile(Plan p, boolean ai, long memAvail, long memTotal, boolean ncnn) {
+    /**
+     * Conservative budget is the operating limit. 85% of free RAM is recorded, not a second gate.
+     * ncnn: the tile is the largest of TILES for which RAM (GPU workspace + native buffers + the rest of the
+     * plan) fits the budget AND the Java part fits its own share of the free Java heap. The tile shrinks with
+     * memory; the work resolution and the precision mode never change here.
+     */
+    static void chooseTile(Plan p, boolean ai, long memAvail, long memTotal, boolean ncnn, int lw, int lh, JavaHeap java) {
         p.budget = budget(memAvail, memTotal);
         p.hardLimit = memAvail > 0 ? memAvail * 85 / 100 : 0;
         p.ncnn = ai && ncnn;
         if (ai) {
             p.aiFixed = ncnn ? AI_WEIGHTS * 2 : AI_WEIGHTS;
-            p.tile = TILES[TILES.length - 1];
+            long javaShare = java.avail() == Long.MAX_VALUE ? Long.MAX_VALUE : java.avail() * JAVA_SHARE_PERCENT / 100;
+            p.javaAvail = java.avail() == Long.MAX_VALUE ? -1 : java.avail();
+            p.tile = 0;
             for (int t : TILES) {
-                long tile = ncnn ? ncnnWorkspace(t) : aiTile(t);
-                if (p.total() - p.aiTiles + tile <= p.budget) { p.tile = t; break; }
+                long tile = ncnn ? ncnnWorkspace(t, lw, lh) + ncnnNative(lw, lh, t) : aiTile(t);
+                boolean ram = p.total() - p.aiTiles + tile <= p.budget;
+                boolean jv = !ncnn || ncnnJava(lw, lh, t) <= javaShare;
+                if (ram && jv) { p.tile = t; break; }
             }
-            p.aiTiles = ncnn ? ncnnWorkspace(p.tile) : aiTile(p.tile);
+            int t = p.tile > 0 ? p.tile : TILES[TILES.length - 1];
+            p.nativeNeed = ncnn ? ncnnNative(lw, lh, t) : 0;
+            p.aiTiles = ncnn ? ncnnWorkspace(t, lw, lh) + p.nativeNeed : aiTile(t);
+            p.javaNeed = ncnn ? ncnnJava(lw, lh, t) : 0;
+            p.javaFits = !ncnn || p.javaNeed <= javaShare;
+            if (p.tile == 0) p.tile = t;
         }
         p.withinBudget = p.total() <= p.budget;
-        p.fits = p.withinBudget;
+        p.fits = p.withinBudget && p.javaFits;
+        p.reason = !p.javaFits ? String.format(Locale.US, "Java heap: يلزم %d MB والمسموح %d%% من المتاح %d MB", mb(p.javaNeed), JAVA_SHARE_PERCENT, mb(p.javaAvail))
+                : !p.withinBudget ? "فوق الميزانية المحافظة لذاكرة النظام" : "";
     }
+
 }

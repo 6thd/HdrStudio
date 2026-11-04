@@ -233,10 +233,12 @@ public final class ExportJob implements Runnable {
             PipelineParams p = req.params;
             boolean yuvPath = s.isHdr() || s.bitDepth > 8;
             MemoryBudget.Plan mem = MemoryBudget.plan(s.width, s.height, yuvPath, outW, outH, hdrOut,
-                    p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal, p.ai && p.aiNcnn);
+                    p.temporal, p.ai, p.aiWorkScale, caps.memAvail, caps.memTotal, p.ai && p.aiNcnn,
+                    p.ai && p.aiNcnn ? MemoryBudget.JavaHeap.current() : MemoryBudget.JavaHeap.UNLIMITED);
             report.append(mem.describe()).append('\n');
+            if (p.ai && p.aiNcnn) report.append(MemoryBudget.JavaHeap.current().describe()).append('\n');
             if (!mem.fits)
-                throw new IllegalStateException("فوق الميزانية المحافظة لهذه الإعدادات (نصف الذاكرة المتاحة، وثلث الذاكرة الكلية كحد). أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
+                throw new IllegalStateException("لا تتسع الذاكرة لهذه الإعدادات: " + mem.reason + ". أغلق التطبيقات الأخرى أو اختر دقة أقل يدوياً.\n" + mem.describe());
             final PowerManager pmFinal = pm;
 
             egl = new Egl(hdrOut);
