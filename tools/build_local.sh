@@ -14,7 +14,9 @@ rm -rf "$OUT/classes" "$OUT/gen" && mkdir -p "$OUT/classes" "$OUT/gen"
 APP_ID=com.mojahed.hdrstudio${TEST:+.test}; VCODE=$(grep -oP 'versionCode = \K[0-9]+' "$ROOT/app/build.gradle.kts"); VNAME=$(grep -oP 'versionName = "\K[^"]+' "$ROOT/app/build.gradle.kts")${TEST:+-test}
 MIN=$(grep -oP 'minSdk = \K[0-9]+' "$ROOT/app/build.gradle.kts"); TGT=$(grep -oP 'targetSdk = \K[0-9]+' "$ROOT/app/build.gradle.kts")
 sed -e "s|<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">|<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"$APP_ID\" android:versionCode=\"$VCODE\" android:versionName=\"$VNAME\">\n    <uses-sdk android:minSdkVersion=\"$MIN\" android:targetSdkVersion=\"$TGT\" />|" \
+    -e 's|android:name="\.|android:name="com.mojahed.hdrstudio.|g' \
     "$ROOT/app/src/main/AndroidManifest.xml" > "$OUT/AndroidManifest.xml"
+# relative component names resolve against the namespace (Gradle does this); the .test package must not change them
 MANIFEST="$OUT/AndroidManifest.xml"
 # 1. resources + manifest (generates R.java, not referenced by code but kept consistent)
 aapt package -f -m -J "$OUT/gen" -M "$MANIFEST" -S "$ROOT/app/src/main/res" -I "$RESJAR"
@@ -29,6 +31,11 @@ aapt package -f -M "$MANIFEST" -S "$ROOT/app/src/main/res" -A "$ROOT/app/src/mai
   -I "$RESJAR" -0 bin -F "$OUT/unsigned.apk"
 (cd "$OUT" && aapt add -f unsigned.apk classes.dex >/dev/null)
 if [ -n "${NATIVE_DIR:-}" ]; then (cd "$NATIVE_DIR" && aapt add -f "$OUT/unsigned.apk" $(find lib -name '*.so' | LC_ALL=C sort) >/dev/null); fi
+# 4b. every component the manifest names must be a class in classes.dex (a launch crash otherwise)
+for c in $(aapt dump xmltree "$OUT/unsigned.apk" AndroidManifest.xml | grep -B2 -A0 'android:name' | grep -oP 'android:name\(0x01010003\)="\K[^"]+' | grep -E '^com\.mojahed\.'); do
+  test -f "$OUT/classes/$(echo "$c" | tr . /).class" || { echo "manifest component $c is not in classes.dex" >&2; exit 1; }
+done
+if aapt dump xmltree "$OUT/unsigned.apk" AndroidManifest.xml | grep -q 'android:name(0x01010003)="\.'; then echo "relative component name left in manifest" >&2; exit 1; fi
 # 5. align + sign (v2/v3 signature)
 zipalign -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 apksigner sign --v2-signing-enabled true --v3-signing-enabled true --ks "$KS" --ks-pass "pass:$PASS" --out "$OUT/HDR-Studio-local.apk" "$OUT/aligned.apk"

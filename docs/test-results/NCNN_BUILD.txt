@@ -53,7 +53,11 @@ HDR Studio 2.3.3-test (built 2026-11-04 in a Linux cloud workspace with tools/bu
 package: com.mojahed.hdrstudio.test  versionCode 10  versionName 2.3.3-test
 sources_sha256: b24925f865ba4c25e9a9e44880dcecb7e63c3f005930d7e4fcd93ab4e7ea6eb4  (sha256 of 'sha256sum' over app/src/main, sorted paths)
 classes.dex_sha256: 4e86bb27ee4275ba59ffdd6c1ff41792a167f15bc65c738a1568971004feb680
-apk_sha256: 11880bc216e38fe19ecd68b75bb791055bca200e39b812d6cbae5a7e634f2990
+apk_sha256: 10a2aaf3d1c35d01ca78cbdf1fc1d04c80000b6e0e1e1b16249bf1bf5b898afa
+withdrawn: apk 11880bc216e38fe19ecd68b75bb791055bca200e39b812d6cbae5a7e634f2990 (same dex) crashed at launch:
+  build_local.sh kept ".ui.MainActivity" while TEST=1 renamed the package, so Android looked for
+  com.mojahed.hdrstudio.test.ui.MainActivity. The script now writes full names (as Gradle's namespace does)
+  and refuses to sign if a manifest component is not a class in classes.dex.
 signing: a local test key generated for this build (not the 2.3.x key, not CI). Uninstall .test first.
 native: lib/arm64-v8a/libhdrstudio_ncnn.so is byte-identical to the one in 2.3.2-test
   sha256 b7fff38ba92b24620392807c659a82a806814168fe3bc5e7acb873259ef2d736
