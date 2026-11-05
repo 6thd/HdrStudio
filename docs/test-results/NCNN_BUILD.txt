@@ -130,3 +130,8 @@ was hashed. From run #5 on, BUILD_INFO lists every dex file and one hash over al
   FP16-storage + FP32-arithmetic decision carry over) · JVM 178 pass, 0 fail, 0 missing (AvcTests included)
   test APK 4ed7fe4e86266bc82f8f8b589e80f292db22f26365acd7d91249f5e0ff851cbc (the phone report must print this)
   artifact zip digest 72a3fa5cee07a57af3aa719805f298ee18b08ccbbaedb5dcab5204a571ca1797
+2.3.10-test, Actions run #10 (https://github.com/6thd/HdrStudio/actions/runs/41990327552), commit c9e4d32: green.
+  versionCode 17 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (unchanged; ncnn decision carries over)
+  JVM 190 pass, 0 fail, 0 missing (TraceTests added)
+  test APK 2fb99e741931989b61b4400a16d85b839745d17b423c7c4b8a092e5c7e7808a9 (the phone report must print this)
+  artifact zip digest dac8ed6e7223b1566535c210e4454ab079a7f60016facb4f7675844bf41ff4f6
