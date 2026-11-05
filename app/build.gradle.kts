@@ -17,8 +17,8 @@ android {
         applicationId = "com.mojahed.hdrstudio"
         minSdk = 29
         targetSdk = 34
-        versionCode = 18
-        versionName = "2.3.11"
+        versionCode = 19
+        versionName = "2.3.12"
         if (ncnnDir != null) {
             ndk { abiFilters += listOf("arm64-v8a") }
             externalNativeBuild {

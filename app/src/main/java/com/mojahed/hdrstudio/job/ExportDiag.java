@@ -14,10 +14,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Export diagnosis, short: the first FRAMES frames of the SDR range, three times.
+ * Export diagnosis, short: the first FRAMES frames of the SDR range, twice.
  *  1. without AI (control; 2.3.10 showed it passes);
- *  2. GLSL as the export runs it;
- *  3. GLSL with glFinish after the processing, before the final draw and the swap.
+ *  2. GLSL as the export runs it (since 2.3.12 with glFinish before the final draw, as in every GLSL AI export).
  * Every frame: EGL binding and GL state of the final draw are checked against the encoder surface, the
  * results of eglPresentationTimeANDROID and eglSwapBuffers are checked (a refused frame is not counted as
  * sent), and after the swap the time the GPU still needed and whether the encoder put anything out within
@@ -33,7 +32,7 @@ public final class ExportDiag implements JobManager.Batch {
     /** End of a range that holds the first FRAMES frames at the source rate. */
     public static long endFor(long startUs, double fps) { return startUs + (long) Math.ceil(FRAMES * 1e6 / Math.max(1, fps)); }
 
-    private ExportRequest variant(String tag, boolean ai, boolean sync) {
+    private ExportRequest variant(String tag, boolean ai) {
         ExportRequest q = new ExportRequest();
         q.uri = base.uri; q.src = base.src; q.preset = base.preset; q.targetShortSide = base.targetShortSide;
         q.bitrateOverride = base.bitrateOverride; q.keepAudio = base.keepAudio; q.selfTest = base.selfTest;
@@ -43,7 +42,6 @@ public final class ExportDiag implements JobManager.Batch {
         q.params.ai = ai;
         q.params.aiNcnn = false;
         q.abTag = tag;
-        q.syncBeforePresent = sync;
         q.diagProbe = true;
         q.eosWaitMs = 15_000;
         return q;
@@ -58,7 +56,7 @@ public final class ExportDiag implements JobManager.Batch {
         snap.stage = "تشخيص التصدير";
         JobManager.get().publish(snap);
         PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
-        r.append("تشخيص التصدير القصير — أول ").append(FRAMES).append(" إطارات: بلا AI، ثم GLSL كما هو، ثم GLSL مع glFinish قبل الرسم النهائي\n");
+        r.append("تشخيص التصدير القصير — أول ").append(FRAMES).append(" إطارات: بلا AI، ثم GLSL بمسار التصدير الفعلي\n");
         r.append(BuildIdentity.describe(ctx)).append('\n');
         r.append(String.format(Locale.US, "المصدر: %dx%d · %.3f fps · المدى %.3f–%.3f ث · الإعداد %s · الصوت %s\n", base.src.width, base.src.height,
                 base.src.avgFps, base.startUs / 1e6, base.endUs / 1e6, base.preset.label, base.keepAudio ? "يُحفظ" : "يُحذف"));
@@ -66,9 +64,8 @@ public final class ExportDiag implements JobManager.Batch {
                 .append("ثم زمن اكتمال GPU بعد التسليم وظهور خرج المرمّز خلال ").append(ExportJob.PROBE_OUT_MS).append(" ms. انتظار EOS 15 ث.\n");
         List<Run> runs = new ArrayList<>();
         try {
-            runs.add(export(ctx, pm, snap, r, "1 بلا AI", variant("DIAG_noAI", false, false)));
-            runs.add(export(ctx, pm, snap, r, "2 GLSL كما هو", variant("DIAG_GLSL", true, false)));
-            runs.add(export(ctx, pm, snap, r, "3 GLSL + glFinish قبل الرسم النهائي", variant("DIAG_GLSL_finish", true, true)));
+            runs.add(export(ctx, pm, snap, r, "1 بلا AI", variant("DIAG_noAI", false)));
+            runs.add(export(ctx, pm, snap, r, "2 GLSL (مسار التصدير الفعلي)", variant("DIAG_GLSL", true)));
             r.append("\nالخلاصة (ملاحظات مقاسة، لا أسباب مثبتة):\n");
             for (Run x : runs) {
                 PipeTrace t = x.job.trace;

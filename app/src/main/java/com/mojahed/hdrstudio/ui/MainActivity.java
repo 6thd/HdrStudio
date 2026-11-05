@@ -240,7 +240,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         abBtn = button("اختبار تصدير A/B: ثانية واحدة SDR بـ GLSL ثم ncnn", false);
         abBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startAbExport(); } });
         c6.addView(abBtn, lp(4));
-        diagBtn = button("تشخيص التصدير القصير: أول 5 إطارات بلا AI ثم GLSL ثم GLSL+glFinish", false);
+        diagBtn = button("تشخيص التصدير القصير: أول 5 إطارات بلا AI ثم GLSL", false);
         diagBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startExportDiag(); } });
         c6.addView(diagBtn, lp(4));
         previewNote = text("", 12, dim);
@@ -616,7 +616,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         startForegroundService(new Intent(this, ExportService.class));
     }
 
-    /** The first frames of the SDR range: without AI, GLSL, GLSL with glFinish before the final draw (job/ExportDiag). */
+    /** The first frames of the SDR range: without AI, then GLSL (job/ExportDiag). */
     private void startExportDiag() {
         if (st.src == null) { toastText("اختر فيديو أولاً"); return; }
         if (JobManager.get().busy()) { toastText("هناك مهمة قيد التشغيل"); return; }

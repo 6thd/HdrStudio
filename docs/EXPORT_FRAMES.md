@@ -60,3 +60,21 @@ Code review of the GLSL AI path (facts):
 - «تشخيص التصدير القصير»: the first 5 frames, (1) without AI, (2) GLSL as the export runs it, (3) GLSL with glFinish
   before the final draw. Each frame after the swap: a fence on everything submitted, how long it took to signal, and
   whether encoder output appeared within 1.5 s. End-of-stream wait 15 s. The long-wait step is not repeated.
+
+## 2.3.11 phone result and 2.3.12 fix
+
+2.3.11 short diagnosis (first 5 frames, 3.984–4.151 s):
+- without AI: 5 sent, 5 out, 5 written; GPU done 0.2–1.6 ms after each swap; encoder output 11–22 ms after the swap.
+- GLSL as it was: EGL/GL state correct on every frame, eglPresentationTimeANDROID and eglSwapBuffers succeeded
+  (each swap took ~1 s), the GPU was still busy 712–831 ms after each swap, no encoder output within 1.5 s for any
+  frame. The output format and SPS/PPS appeared only after EOS was sent, then EOS with 0 frames: file without video.
+- GLSL with glFinish before the final draw (1684–1869 ms per wait): 5 sent, 5 out, 5 written, output 10–21 ms after
+  each swap. Frame time 10.07 s (median) against 11.47 s without the wait.
+
+2.3.12: every GLSL AI export (A/B, preview clip, full export) calls glFinish after the frame's processing, before the
+final draw and the swap — the position that succeeded. ncnn's AI stage already ends with glFinish in FramePipeline,
+so it is unchanged. The wait is reported (report line «مزامنة GPU قبل التسليم», median/max in the A/B report) and is
+inside the measured frame time. The diagnostic-only GPU fence probe and encoder-output wait stay limited to
+«تشخيص التصدير القصير»; the normal export has no diagnostic waits. The per-frame EGL/GL state check and the checked
+presentation time and swap stay in every export (they read state, they do not wait). Encoding, colours, model and
+acceptance unchanged.

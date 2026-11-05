@@ -74,6 +74,9 @@ public final class ExportJob implements Runnable {
     /** Frame trace of the render+encode pass (decoder → pipeline → encoder → muxer); null before it starts. */
     public PipeTrace trace;
     private boolean traceReported;
+    /** GLSL AI export: glFinish before the final draw; time of each wait (ms). */
+    private boolean gpuSyncBeforePresent;
+    public final java.util.List<Long> syncMs = new java.util.ArrayList<>();
     /** Encoder no-progress limit: this many frames sent and this long since the first, with no frame out. */
     static final int STALL_FRAMES = 16;
     static final long STALL_MS = 60_000;
@@ -407,6 +410,8 @@ public final class ExportJob implements Runnable {
             double cll = 0, fall = 0;
             int n = 0;
             long prevPts = -1;
+            gpuSyncBeforePresent = p.ai && !p.aiNcnn;   // ncnn's AI stage already ends with glFinish (NcnnSr upload)
+            if (gpuSyncBeforePresent) report.append("مزامنة GPU قبل التسليم للمرمّز: glFinish بعد معالجة GLSL AI لكل إطار، قبل الرسم النهائي\n");
             while (true) {
                 long t0 = System.nanoTime();
                 if (!fs.next(kit, in, start, cancel)) break;
@@ -414,11 +419,15 @@ public final class ExportJob implements Runnable {
                 prevPts = fs.ptsUs;
                 Tex out = pipe.process(in, dt);
                 trace.frame(PipeTrace.PROCESSED, fs.ptsUs);
-                if (req.syncBeforePresent) {
-                    // diagnosis variant: wait for all queued GPU work (AI) before the final draw and the swap
+                if (gpuSyncBeforePresent) {
+                    // GLSL AI queues seconds of GPU work per frame; the encoder (OMX.hisi.video.encoder.avc, 2.3.11
+                    // diagnosis) put out nothing when the swapped buffer still waited on it, and every frame when the
+                    // work was finished first. So: finish the queued work, then the final draw and the swap.
                     long g0 = System.nanoTime();
                     android.opengl.GLES20.glFinish();
-                    if (n < 6) trace.event(String.format(Locale.US, "إطار %d: glFinish قبل الرسم النهائي %.1f ms", n, (System.nanoTime() - g0) / 1e6));
+                    long gMs = (System.nanoTime() - g0) / 1_000_000L;
+                    syncMs.add(gMs);
+                    if (n < 3) trace.event("إطار " + n + ": glFinish قبل الرسم النهائي " + gMs + " ms");
                 }
                 if (n == 0 && p.ai) {
                     report.append(String.format(Locale.US, "أول إطار AI: كلي %d ms · قراءة %d · extract شاملاً النقل الداخلي والمزامنة %d · رفع %d · بلاطات %d\n",

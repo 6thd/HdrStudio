@@ -131,6 +131,11 @@ public final class AbExport implements JobManager.Batch {
         if (!f.isEmpty())
             s.append(String.format(Locale.US, "  زمن الإطار في حلقة المعالجة (فك + معالجة + عرض للمرمّز): أدنى %d · وسيط %d · أعلى %d ms\n",
                     f.get(0), f.get(f.size() / 2), f.get(f.size() - 1)));
+        if (!j.syncMs.isEmpty()) {
+            List<Long> g = new ArrayList<>(j.syncMs);
+            Collections.sort(g);
+            s.append(String.format(Locale.US, "  انتظار glFinish قبل التسليم للمرمّز (ضمن زمن الإطار): وسيط %d · أعلى %d ms\n", g.get(g.size() / 2), g.get(g.size() - 1)));
+        }
         if (j.engine().equals("ncnn") && !j.aiMs.isEmpty()) {
             List<Long> a = new ArrayList<>(j.aiMs);
             Collections.sort(a);
@@ -138,7 +143,7 @@ public final class AbExport implements JobManager.Batch {
         }
         String rep = j.report();
         if (rep != null) for (String line : rep.split("\n"))
-            if (line.startsWith("أول إطار AI") || line.startsWith("مكتوب:") || line.startsWith("الصوت:") || line.startsWith("A/B:") || line.contains("بلاطة"))
+            if (line.startsWith("أول إطار AI") || line.startsWith("مكتوب:") || line.startsWith("الصوت:") || line.startsWith("A/B:") || line.contains("بلاطة") || line.startsWith("مزامنة GPU"))
                 s.append("  ").append(line).append('\n');
         return s.toString();
     }

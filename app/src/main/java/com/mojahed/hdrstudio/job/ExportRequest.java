@@ -23,8 +23,6 @@ public final class ExportRequest {
     public String abTag;
     /** A/B: the AI tile both engines use (0 = this job computes the common tile of both engines' memory plans). */
     public int tileOverride;
-    /** Export diagnosis only: glFinish after the frame's processing, before the final draw and the swap. */
-    public boolean syncBeforePresent;
     /** Export diagnosis only: after each swap, measure GPU completion and wait briefly for encoder output. */
     public boolean diagProbe;
     /** How long to wait for the encoder's end of stream after EOS was sent. */
