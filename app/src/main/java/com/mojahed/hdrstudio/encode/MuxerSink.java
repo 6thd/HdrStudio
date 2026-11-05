@@ -18,6 +18,8 @@ public final class MuxerSink {
     private MediaFormat pendingAudio;
     private boolean started, stopped;
     public long videoSamples, audioSamples, lastVideoPtsUs = -1, lastAudioPtsUs = -1, bytes;
+    /** Optional frame trace (export diagnostics). */
+    public volatile PipeTrace trace;
 
     public MuxerSink(FileDescriptor fd, int orientationDegrees) throws IOException {
         muxer = new MediaMuxer(fd, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
@@ -33,22 +35,38 @@ public final class MuxerSink {
     public synchronized void setAudioFormat(MediaFormat f) { pendingAudio = f; }
 
     public synchronized void onVideoFormat(MediaFormat f) {
-        if (started) throw new IllegalStateException("video format changed after muxer start");
+        PipeTrace t = trace;
+        if (started) {
+            if (t != null) t.event("muxer: تغيّرت صيغة الفيديو بعد البدء (مرفوض)");
+            throw new IllegalStateException("video format changed after muxer start");
+        }
         videoTrack = muxer.addTrack(f);
-        if (pendingAudio != null) audioTrack = muxer.addTrack(pendingAudio);
+        if (t != null) t.event("muxer: أُضيف مسار الفيديو #" + videoTrack);
+        if (pendingAudio != null) {
+            audioTrack = muxer.addTrack(pendingAudio);
+            if (t != null) t.event("muxer: أُضيف مسار الصوت #" + audioTrack + " (" + pendingAudio.getString(MediaFormat.KEY_MIME) + ")");
+        }
         muxer.start();
         started = true;
+        if (t != null) t.event("muxer: بدأ");
         notifyAll();
     }
 
     public synchronized boolean isStarted() { return started; }
     public synchronized boolean hasAudio() { return audioTrack >= 0; }
 
-    public synchronized void writeVideo(ByteBuffer data, MediaCodec.BufferInfo info) {
-        if (!started || stopped) return;
+    /** @return true if written; false if the muxer has not started or was stopped (the sample is dropped). */
+    public synchronized boolean writeVideo(ByteBuffer data, MediaCodec.BufferInfo info) {
+        PipeTrace t = trace;
+        if (!started || stopped) {
+            if (t != null) t.frame(PipeTrace.DROPPED, info.presentationTimeUs);
+            return false;
+        }
         muxer.writeSampleData(videoTrack, data, info);
         videoSamples++; bytes += info.size;
         lastVideoPtsUs = Math.max(lastVideoPtsUs, info.presentationTimeUs);
+        if (t != null) t.frame(PipeTrace.WRITTEN, info.presentationTimeUs);
+        return true;
     }
 
     public synchronized void writeAudio(ByteBuffer data, MediaCodec.BufferInfo info) {
@@ -56,6 +74,8 @@ public final class MuxerSink {
         muxer.writeSampleData(audioTrack, data, info);
         audioSamples++; bytes += info.size;
         lastAudioPtsUs = Math.max(lastAudioPtsUs, info.presentationTimeUs);
+        PipeTrace t = trace;
+        if (t != null) t.frame(PipeTrace.AUDIO, info.presentationTimeUs);
     }
 
     /** Stops the muxer (finalises the moov box). Returns false if it never started. */
@@ -63,6 +83,8 @@ public final class MuxerSink {
         if (stopped) return started;
         stopped = true;
         if (started) muxer.stop();
+        PipeTrace t = trace;
+        if (t != null) t.event(started ? "muxer: أُغلق (" + videoSamples + " فيديو · " + audioSamples + " صوت)" : "muxer: أُغلق دون أن يبدأ");
         return started;
     }
 

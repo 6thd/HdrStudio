@@ -21,6 +21,7 @@ import com.mojahed.hdrstudio.encode.Check;
 import com.mojahed.hdrstudio.encode.EncodeConfig;
 import com.mojahed.hdrstudio.encode.HdrMetadata;
 import com.mojahed.hdrstudio.encode.MuxerSink;
+import com.mojahed.hdrstudio.encode.PipeTrace;
 import com.mojahed.hdrstudio.encode.VideoEncoder;
 import com.mojahed.hdrstudio.gl.Egl;
 import com.mojahed.hdrstudio.gl.GlKit;
@@ -70,6 +71,12 @@ public final class ExportJob implements Runnable {
     public long videoSamples, audioSamples;
     public String outputName;
     public int abTile;
+    /** Frame trace of the render+encode pass (decoder → pipeline → encoder → muxer); null before it starts. */
+    public PipeTrace trace;
+    private boolean traceReported;
+    /** Encoder no-progress limit: this many frames sent and this long since the first, with no frame out. */
+    static final int STALL_FRAMES = 16;
+    static final long STALL_MS = 60_000;
     public String engine() { return req.params.ai ? (req.params.aiNcnn ? "ncnn" : "GLSL") : "بلا AI"; }
     public String outputUri() { return snap.outputUri; }
     public JobManager.State state() { return snap.state; }
@@ -343,7 +350,10 @@ public final class ExportJob implements Runnable {
                 pfd = ctx.getContentResolver().openFileDescriptor(pendingUri, "rw");
             }
             mux = new MuxerSink(pfd.getFileDescriptor(), s.rotation);
-            long offsetUs = req.bounded() ? Math.max(0, req.startUs) : 0;
+            trace = new PipeTrace();
+            mux.trace = trace;
+            trace.event(String.format(Locale.US, "بدء مرحلة الترميز: الفترة %.3f–%s ث · إزاحة الطوابع %.3f ث · دوران %d", start / 1e6,
+                    end == Long.MAX_VALUE ? "النهاية" : String.format(Locale.US, "%.3f", end / 1e6), (req.bounded() ? Math.max(0, req.startUs) : 0) / 1e6, s.rotation));            long offsetUs = req.bounded() ? Math.max(0, req.startUs) : 0;
             if (s.audioTrack >= 0 && req.keepAudio) {
                 stage("تجهيز الصوت");
                 audio = AudioTrackSource.open(ctx, req.uri, s.audioTrack, ctx.getCacheDir(), start, end, offsetUs, cancel);
@@ -351,7 +361,8 @@ public final class ExportJob implements Runnable {
                 report.append("الصوت: ").append(audio.mode.equals("copy") ? "نسخ كما هو" : "أعيد ترميزه إلى AAC (الصيغة الأصلية غير مدعومة في MP4)").append('\n');
             } else if (s.audioTrack >= 0) report.append("الصوت: حُذف بطلب المستخدم\n");
             stage(passes == 2 ? "المرحلة 2/2: المعالجة والترميز" : "المعالجة والترميز");
-            ve = new VideoEncoder(enc, config, meta, mux);
+            ve = new VideoEncoder(enc, config, meta, mux, trace);
+            trace.event("المرمّز: configure وcreateInputSurface وstart نجحت");
             final AudioTrackSource au = audio;
             final MuxerSink mx = mux;
             if (au != null) ve.setListener(new VideoEncoder.Listener() {
@@ -361,6 +372,7 @@ public final class ExportJob implements Runnable {
             egl.makeCurrent(ws.surface);
             pipe = newPipeline(kit, s, p, sr, ncnn, pmFinal, mem);
             fs = new FrameSource(ctx, req.uri, s, yuvPath, start, end);
+            fs.trace = trace;
             EncodeSelfTest.Result st = req.selfTest;
             Map<String, Object> u = new HashMap<>();
             u.put("uComp", st != null && st.usable() ? st.comp : com.mojahed.hdrstudio.core.ColorMath.IDENTITY3);
@@ -376,6 +388,8 @@ public final class ExportJob implements Runnable {
                 double dt = prevPts < 0 ? 1 / s.avgFps : (fs.ptsUs - prevPts) / 1e6;
                 prevPts = fs.ptsUs;
                 Tex out = pipe.process(in, dt);
+                trace.frame(PipeTrace.PROCESSED, fs.ptsUs);
+                if (req.diagFrameDelayMs > 0) Thread.sleep(req.diagFrameDelayMs);
                 if (n == 0 && p.ai) {
                     report.append(String.format(Locale.US, "أول إطار AI: كلي %d ms · قراءة %d · extract شاملاً النقل الداخلي والمزامنة %d · رفع %d · بلاطات %d\n",
                             pipe.info.aiMs, pipe.info.aiReadMs, pipe.info.aiExtractMs, pipe.info.aiUploadMs, pipe.info.tiles));
@@ -387,7 +401,10 @@ public final class ExportJob implements Runnable {
                 u.put("uIn", out);
                 kit.runToSurface("present.frag", u, outW, outH);
                 egl.swap(ws.surface, (fs.ptsUs - offsetUs) * 1000L);
+                trace.frame(PipeTrace.SENT, fs.ptsUs - offsetUs);
                 ve.checkError();
+                String stall = trace.encoderStall(STALL_FRAMES, STALL_MS);
+                if (stall != null) throw new IllegalStateException(stall);
                 frameMs.add((System.nanoTime() - t0) / 1_000_000L);
                 if (p.ai) aiMs.add(pipe.info.aiMs);
                 n++;
@@ -395,12 +412,17 @@ public final class ExportJob implements Runnable {
                 frameTick(t0, n, total, passes - 1, passes);
             }
             stage("إنهاء الترميز");
+            trace.event("انتهت حلقة المعالجة: " + n + " إطار");
             ve.signalEndOfInput();
-            if (!ve.awaitEos(60_000)) throw new IllegalStateException("المرمّز لم ينهِ الملف خلال المهلة");
+            if (!ve.awaitEos(60_000)) throw new IllegalStateException("المرمّز لم ينهِ الملف خلال 60 ث بعد EOS");
+            trace.event("انتهى انتظار EOS");
+            ve.checkError();
             if (audio != null) audio.pumpUntil(mux, Long.MAX_VALUE);
             if (!mux.stop()) throw new IllegalStateException("لم يُكتب أي إطار (المرمّز لم يبدأ)");
             report.append(String.format(Locale.US, "مكتوب: %d إطار فيديو · %d عينة صوت · %.1f MB\n", mux.videoSamples, mux.audioSamples, mux.bytes / 1e6));
             videoSamples = mux.videoSamples; audioSamples = mux.audioSamples;
+            report.append(trace.describe());
+            traceReported = true;
             if (hdrOut) {
                 report.append(meta.describe()).append('\n');
                 if (passes == 1 && n > 0)
@@ -443,9 +465,11 @@ public final class ExportJob implements Runnable {
             String msg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
             if (msg.contains("ENOSPC") || msg.toLowerCase(Locale.US).contains("no space")) msg = "امتلأت مساحة التخزين أثناء الكتابة";
             snap.error = msg;
+            if (trace != null && !traceReported) { report.append(trace.describe()); traceReported = true; }
             snap.result = report.toString().trim();
             stage("فشل");
         } finally {
+            if (wallMs == 0) wallMs = System.currentTimeMillis() - runStart;
             if (fs != null) try { fs.release(); } catch (Throwable ignored) { }
             if (pipe != null) try { pipe.release(); } catch (Throwable ignored) { }
             if (sr != null) try { sr.release(); } catch (Throwable ignored) { }
@@ -459,6 +483,11 @@ public final class ExportJob implements Runnable {
                 try { egl.release(); } catch (Throwable ignored) { }
             }
             if (pfd != null) try { pfd.close(); } catch (IOException ignored) { }
+            if (snap.state == JobManager.State.FAILED && (pendingUri != null || cacheOut != null)) {
+                // keep the rejected file and its diagnostics inside the app's own storage for inspection
+                String kept = RejectedOutput.keep(ctx, pendingUri, cacheOut, outputName, snap.result);
+                snap.result = (snap.result == null ? "" : snap.result + "\n") + kept;
+            }
             if (pendingUri != null) {          // not committed -> remove the partial file
                 try { ctx.getContentResolver().delete(pendingUri, null, null); } catch (RuntimeException ignored) { }
             }

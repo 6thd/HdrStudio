@@ -36,7 +36,15 @@ public final class VideoEncoder {
     public final HdrSeiGuard seiGuard;
     private Listener listener;
 
+    private final PipeTrace trace;
+
     public VideoEncoder(DeviceCaps.Enc enc, EncodeConfig c, HdrMetadata meta, MuxerSink mux) throws Exception {
+        this(enc, c, meta, mux, null);
+    }
+
+    /** @param trace optional frame trace (export diagnostics): encoder output, format change, EOS, errors */
+    public VideoEncoder(DeviceCaps.Enc enc, EncodeConfig c, HdrMetadata meta, MuxerSink mux, PipeTrace trace) throws Exception {
+        this.trace = trace;
         if (!enc.name.equals(c.encoder)) throw new IllegalArgumentException("config is for " + c.encoder + ", not " + enc.name);
         if (c.hdr && meta == null) throw new IllegalArgumentException("HDR10 needs metadata");
         this.mux = mux;
@@ -54,6 +62,11 @@ public final class VideoEncoder {
                 try {
                     ByteBuffer b = mc.getOutputBuffer(i);
                     boolean cfg = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+                    if (trace != null) {
+                        if (info.size > 0) trace.frame(cfg ? PipeTrace.ENC_CONFIG : PipeTrace.ENC_OUT, info.presentationTimeUs);
+                        else if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0) trace.event("المرمّز: مخزن خرج فارغ flags=" + info.flags);
+                        if (info.size > 0 && b == null) trace.event("المرمّز: getOutputBuffer أعاد null");
+                    }
                     if (info.size > 0 && b != null) {
                         b.position(info.offset); b.limit(info.offset + info.size);
                         if (seiGuard != null) {
@@ -78,11 +91,18 @@ public final class VideoEncoder {
                         }
                     }
                     mc.releaseOutputBuffer(i, false);
-                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) signalEos();
+                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        if (trace != null) trace.event("المرمّز: استُلم EOS (حجم " + info.size + "، PTS " + info.presentationTimeUs + ")");
+                        signalEos();
+                    }
                 } catch (Throwable t) { fail(t); }
             }
-            @Override public void onError(MediaCodec mc, MediaCodec.CodecException e) { fail(e); }
+            @Override public void onError(MediaCodec mc, MediaCodec.CodecException e) {
+                if (trace != null) trace.event("المرمّز: onError " + e.getErrorCode() + " " + e.getDiagnosticInfo());
+                fail(e);
+            }
             @Override public void onOutputFormatChanged(MediaCodec mc, MediaFormat of) {
+                if (trace != null) trace.event("المرمّز: تغيّرت صيغة الخرج " + summarize(of));
                 try {
                     // Carry the colour description we configured (and verified by the self test)
                     // into the container's colr box when the codec does not echo it.
@@ -240,7 +260,24 @@ public final class VideoEncoder {
         return f;
     }
 
-    private void fail(Throwable t) { if (error == null) error = t; signalEos(); }
+    private void fail(Throwable t) {
+        if (trace != null) trace.event("المرمّز/muxer: خطأ " + t);
+        if (error == null) error = t;
+        signalEos();
+    }
+
+    /** Short description of an output format for the trace. */
+    static String summarize(MediaFormat f) {
+        StringBuilder b = new StringBuilder();
+        b.append(f.getString(MediaFormat.KEY_MIME));
+        if (f.containsKey(MediaFormat.KEY_WIDTH) && f.containsKey(MediaFormat.KEY_HEIGHT))
+            b.append(' ').append(f.getInteger(MediaFormat.KEY_WIDTH)).append('x').append(f.getInteger(MediaFormat.KEY_HEIGHT));
+        for (String k : new String[]{"profile", "level", "color-standard", "color-transfer", "color-range"})
+            if (f.containsKey(k)) try { b.append(' ').append(k).append('=').append(f.getInteger(k)); } catch (RuntimeException ignored) { }
+        for (String k : new String[]{"csd-0", "csd-1"})
+            if (f.containsKey(k)) { java.nio.ByteBuffer cb = f.getByteBuffer(k); b.append(' ').append(k).append('=').append(cb == null ? 0 : cb.remaining()).append('B'); }
+        return b.toString();
+    }
     private void signalEos() { synchronized (eosLock) { eos = true; eosLock.notifyAll(); } }
 
     public void checkError() {
@@ -248,7 +285,10 @@ public final class VideoEncoder {
         if (t != null) throw new IllegalStateException("خطأ في الترميز: " + t.getMessage(), t);
     }
 
-    public void signalEndOfInput() { codec.signalEndOfInputStream(); }
+    public void signalEndOfInput() {
+        if (trace != null) trace.event("أُرسل EOS إلى المرمّز (signalEndOfInputStream)");
+        codec.signalEndOfInputStream();
+    }
 
     /** Waits for the end-of-stream buffer (all frames written). */
     public boolean awaitEos(long timeoutMs) throws InterruptedException {

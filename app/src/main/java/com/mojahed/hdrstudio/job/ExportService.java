@@ -37,7 +37,7 @@ public final class ExportService extends Service {
         int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         startForeground(ID, build("بدء التصدير", "", 0), type);
         if (worker != null && worker.isAlive()) return START_NOT_STICKY;
-        final AbExport ab = JobManager.get().takePendingAb();
+        final JobManager.Batch ab = JobManager.get().takePendingAb();
         final ExportRequest req = ab == null ? JobManager.get().takePending() : null;
         if (req == null && ab == null) { stopSelf(); return START_NOT_STICKY; }
         PowerManager pm = getSystemService(PowerManager.class);

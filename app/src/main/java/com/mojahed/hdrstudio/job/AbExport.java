@@ -21,7 +21,7 @@ import java.util.Locale;
  * interruptions, frames and audio, and AbCompare's picture and motion comparison.
  * Nothing here changes the default engine (GLSL).
  */
-public final class AbExport {
+public final class AbExport implements JobManager.Batch {
     public static final long LENGTH_US = 1_000_000L;
     private final ExportRequest base;
 
@@ -41,7 +41,7 @@ public final class AbExport {
     }
 
     /** Runs both exports and the comparison; publishes progress and the final report through JobManager. */
-    void run(Context ctx) {
+    @Override public void run(Context ctx) {
         StringBuilder r = new StringBuilder();
         JobManager.Snapshot snap = new JobManager.Snapshot();
         snap.state = JobManager.State.RUNNING;

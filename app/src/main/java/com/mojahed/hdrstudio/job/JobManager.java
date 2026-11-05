@@ -39,12 +39,15 @@ public final class JobManager {
     public synchronized Snapshot snapshot() { return snap; }
     public synchronized boolean busy() { return snap.state == State.RUNNING; }
 
-    private AbExport pendingAb;
+    /** Several exports run one after the other by ExportService (A/B test, export diagnosis). */
+    public interface Batch { void run(android.content.Context ctx); }
+
+    private Batch pendingAb;
 
     public synchronized void setPending(ExportRequest r) { pending = r; }
-    /** A/B export test: run by ExportService instead of a single export. */
-    public synchronized void setPendingAb(AbExport ab) { pendingAb = ab; }
-    public synchronized AbExport takePendingAb() { AbExport a = pendingAb; pendingAb = null; return a; }
+    /** A/B export test or export diagnosis: run by ExportService instead of a single export. */
+    public synchronized void setPendingAb(Batch ab) { pendingAb = ab; }
+    public synchronized Batch takePendingAb() { Batch a = pendingAb; pendingAb = null; return a; }
     public synchronized ExportRequest takePending() { ExportRequest r = pending; pending = null; return r; }
     public synchronized void attach(ExportJob j) { job = j; }
 

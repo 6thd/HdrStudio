@@ -42,6 +42,8 @@ public final class FrameSource {
     private final long endUs;
     public long ptsUs = -1;
     public int framesOut;
+    /** Optional frame trace (export diagnostics): every decoded frame and those inside the range. */
+    public com.mojahed.hdrstudio.encode.PipeTrace trace;
 
     public FrameSource(Context ctx, Uri uri, SourceInfo src, boolean yuvPath, long startUs, long endUs) throws IOException {
         this.src = src; this.yuvPath = yuvPath; this.endUs = endUs;
@@ -88,7 +90,10 @@ public final class FrameSource {
                 if (i >= 0) {
                     long t = ex.getSampleTime();
                     int n = (t < 0 || t > endUs) ? -1 : ex.readSampleData(dec.getInputBuffer(i), 0);
-                    if (n < 0) { dec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputDone = true; }
+                    if (n < 0) {
+                        dec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputDone = true;
+                        if (trace != null) trace.event("المفكك: نهاية الإدخال عند عينة PTS " + t + (t > endUs ? " (بعد نهاية الفترة)" : ""));
+                    }
                     else { dec.queueInputBuffer(i, 0, n, t, 0); ex.advance(); }
                 }
             }
@@ -96,6 +101,11 @@ public final class FrameSource {
             if (o >= 0) {
                 boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
                 boolean wanted = info.size > 0 && info.presentationTimeUs >= startUs && info.presentationTimeUs <= endUs;
+                if (trace != null) {
+                    if (info.size > 0) trace.frame(com.mojahed.hdrstudio.encode.PipeTrace.DECODED, info.presentationTimeUs);
+                    if (wanted) trace.frame(com.mojahed.hdrstudio.encode.PipeTrace.IN_RANGE, info.presentationTimeUs);
+                    if (eos) trace.event("المفكك: EOS");
+                }
                 dec.releaseOutputBuffer(o, wanted);
                 if (eos) outputDone = true;
                 if (wanted) {

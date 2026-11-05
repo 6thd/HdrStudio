@@ -23,6 +23,8 @@ public final class ExportRequest {
     public String abTag;
     /** A/B: the AI tile both engines use (0 = this job computes the common tile of both engines' memory plans). */
     public int tileOverride;
+    /** Export diagnosis only: sleep this long after each frame's processing (no GPU work), to isolate slow frames. */
+    public long diagFrameDelayMs;
 
     /** Only [startUs, endUs] is exported. */
     public boolean bounded() { return preview || abTag != null; }

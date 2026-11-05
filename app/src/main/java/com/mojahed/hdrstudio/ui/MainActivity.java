@@ -67,7 +67,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
     private Switch aiSwitch, ncnnSwitch, temporalSwitch, debandSwitch, measureSwitch, audioSwitch, cropSwitch;
     private SeekBar sDenoise, sChroma, sTemporal, sAi, sSharpen, sExpand, sPeak, sVibrance, sBitrate, sPos;
     private TextView bitrateLabel, posLabel;
-    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, perfBtn, previewBtn, clipBtn, abBtn, openBtn;
+    private Button exportBtn, selfTestBtn, trialBtn, aiTestBtn, compareBtn, perfBtn, previewBtn, clipBtn, abBtn, diagBtn, openBtn;
     private ProgressBar progress;
     private CompareView compare;
     private VideoView video;
@@ -240,6 +240,9 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         abBtn = button("اختبار تصدير A/B: ثانية واحدة SDR بـ GLSL ثم ncnn", false);
         abBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startAbExport(); } });
         c6.addView(abBtn, lp(4));
+        diagBtn = button("تشخيص التصدير: ثانية SDR بلا AI ثم GLSL (تتبع الإطارات)", false);
+        diagBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { startExportDiag(); } });
+        c6.addView(diagBtn, lp(4));
         previewNote = text("", 12, dim);
         c6.addView(previewNote, lp(4));
         compare = new CompareView(this);
@@ -613,6 +616,25 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         startForegroundService(new Intent(this, ExportService.class));
     }
 
+    /** The same one-second SDR range without AI, then with GLSL, with a frame trace (job/ExportDiag). */
+    private void startExportDiag() {
+        if (st.src == null) { toastText("اختر فيديو أولاً"); return; }
+        if (JobManager.get().busy()) { toastText("هناك مهمة قيد التشغيل"); return; }
+        Presets ps = preset();
+        if (ps.hdr || st.src.isHdr()) { statusText.setText("تشخيص التصدير لمقطع SDR فقط: اختر مصدراً SDR وإعداد تصدير SDR."); return; }
+        EncodeSelfTest.Result r = currentSelfTest();
+        if (r == null || !r.usable()) { statusText.setText(r != null ? selfTestBlocked(r) : "شغّل «فحص مسار التصدير» أولاً للتأكد من صحة الألوان."); return; }
+        ExportRequest q = new ExportRequest();
+        q.uri = st.uri; q.src = st.src; q.params = params(); q.preset = ps; q.targetShortSide = targetShort();
+        q.bitrateOverride = bitrate(); q.measureLight = false; q.keepAudio = audioSwitch.isChecked(); q.selfTest = r;
+        q.startUs = posUs(); q.endUs = q.startUs + com.mojahed.hdrstudio.job.ExportDiag.LENGTH_US;
+        JobManager.get().setPendingAb(new com.mojahed.hdrstudio.job.ExportDiag(q));
+        abRunning = true;
+        keepScreen(true);
+        video.setVisibility(View.GONE);
+        startForegroundService(new Intent(this, ExportService.class));
+    }
+
     @Override
     public void onUpdate(JobManager.Snapshot s) {
         if (abRunning && s.abFinal) { abRunning = false; keepScreen(false); }
@@ -621,6 +643,7 @@ public final class MainActivity extends Activity implements JobManager.Listener 
         exportBtn.setText(running ? "إلغاء" : "بدء التصدير");
         clipBtn.setEnabled(!running);
         if (abBtn != null) abBtn.setEnabled(!running);
+        if (diagBtn != null) diagBtn.setEnabled(!running);
         progress.setProgress((int) (s.fraction * 1000));
         String head = (s.preview ? "[معاينة] " : "") + s.stage + (s.thermal.isEmpty() ? "" : " · " + s.thermal);
         statusText.setText(s.state == JobManager.State.FAILED ? head + "\n" + s.error : head);
