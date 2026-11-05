@@ -128,9 +128,43 @@ public final class Egl {
         }
     }
 
+    /**
+     * Sets the presentation time and swaps. Both results are checked: a frame whose time or swap was
+     * refused is not handed to the encoder and is not counted as sent (the caller gets a GlException).
+     */
     public void swap(EGLSurface s, long ptsNs) {
-        EGLExt.eglPresentationTimeANDROID(display, s, ptsNs);
+        EglDiag.takeError();
+        if (!EGLExt.eglPresentationTimeANDROID(display, s, ptsNs))
+            throw new GlException("eglPresentationTimeANDROID failed (pts " + ptsNs + " ns) " + EglDiag.takeErrorLine(""));
         if (!EGL14.eglSwapBuffers(display, s)) throw new GlException("eglSwapBuffers failed " + EglDiag.takeErrorLine(""));
+    }
+
+    /**
+     * The EGL binding of this thread compared with what the final draw needs: this context, the
+     * encoder surface as draw and read surface, and that surface's size.
+     * @param facts receives a one-line description
+     * @return null when everything matches, else what does not
+     */
+    public String checkCurrent(EGLSurface expected, int w, int h, StringBuilder facts) {
+        EGLContext c = EGL14.eglGetCurrentContext();
+        EGLSurface draw = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW), read = EGL14.eglGetCurrentSurface(EGL14.EGL_READ);
+        EGLDisplay d = EGL14.eglGetCurrentDisplay();
+        int[] sw = new int[1], sh = new int[1];
+        boolean qw = EGL14.eglQuerySurface(display, expected, EGL14.EGL_WIDTH, sw, 0);
+        boolean qh = EGL14.eglQuerySurface(display, expected, EGL14.EGL_HEIGHT, sh, 0);
+        int err = EglDiag.takeError();
+        boolean ctxOk = context.equals(c), drawOk = expected.equals(draw), readOk = expected.equals(read), dispOk = display.equals(d);
+        boolean sizeOk = qw && qh && sw[0] == w && sh[0] == h;
+        facts.append(String.format(java.util.Locale.US, "EGL: context %s · draw %s · read %s · display %s · سطح المرمّز %dx%d%s · خطأ EGL %s",
+                ctxOk ? "صحيح" : "مختلف", drawOk ? "= سطح المرمّز" : "مختلف", readOk ? "= سطح المرمّز" : "مختلف", dispOk ? "صحيح" : "مختلف",
+                sw[0], sh[0], sizeOk ? "" : " (المتوقع " + w + "x" + h + ")", EglDiag.errName(err)));
+        StringBuilder bad = new StringBuilder();
+        if (!ctxOk) bad.append("السياق الحالي ليس سياق التصدير; ");
+        if (!drawOk) bad.append("سطح الرسم الحالي ليس سطح المرمّز; ");
+        if (!readOk) bad.append("سطح القراءة الحالي ليس سطح المرمّز; ");
+        if (!dispOk) bad.append("الـdisplay الحالي مختلف; ");
+        if (!sizeOk) bad.append("حجم سطح المرمّز ").append(sw[0]).append('x').append(sh[0]).append(" لا يساوي ").append(w).append('x').append(h).append("; ");
+        return bad.length() == 0 ? null : bad.toString();
     }
 
     public void destroySurface(EGLSurface s) {

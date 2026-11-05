@@ -156,6 +156,31 @@ public final class ExportJob implements Runnable {
         return fp;
     }
 
+    /**
+     * Diagnosis only: how long the GPU still needed after the swap (fence on everything submitted so far,
+     * including the final draw), then whether the encoder put anything out within PROBE_OUT_MS.
+     */
+    static final long PROBE_OUT_MS = 1500;
+
+    private static void probeAfterSwap(PipeTrace t, int n) {
+        long before = t.count(PipeTrace.ENC_OUT) + t.count(PipeTrace.ENC_CONFIG);
+        long f0 = System.nanoTime();
+        long fence = android.opengl.GLES30.glFenceSync(android.opengl.GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        int r = android.opengl.GLES30.glClientWaitSync(fence, android.opengl.GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 30_000_000_000L);
+        android.opengl.GLES30.glDeleteSync(fence);
+        double gpuMs = (System.nanoTime() - f0) / 1e6;
+        String rs = r == android.opengl.GLES30.GL_ALREADY_SIGNALED ? "مكتمل مسبقاً" : r == android.opengl.GLES30.GL_CONDITION_SATISFIED ? "اكتمل"
+                : r == android.opengl.GLES30.GL_TIMEOUT_EXPIRED ? "انتهت المهلة 30 ث" : "فشل 0x" + Integer.toHexString(r);
+        long w0 = System.currentTimeMillis(), after = before;
+        while (System.currentTimeMillis() - w0 < PROBE_OUT_MS) {
+            after = t.count(PipeTrace.ENC_OUT) + t.count(PipeTrace.ENC_CONFIG);
+            if (after > before) break;
+            try { Thread.sleep(10); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        t.event(String.format(Locale.US, "إطار %d: GPU بعد التسليم %s خلال %.1f ms · خرج المرمّز %s", n, rs, gpuMs,
+                after > before ? "ظهر بعد " + (System.currentTimeMillis() - w0) + " ms" : "لم يظهر خلال " + PROBE_OUT_MS + " ms"));
+    }
+
     // ------------------------------------------------------------------ plan
     private void plan(DeviceCaps caps) {
         SourceInfo s = req.src;
@@ -389,7 +414,12 @@ public final class ExportJob implements Runnable {
                 prevPts = fs.ptsUs;
                 Tex out = pipe.process(in, dt);
                 trace.frame(PipeTrace.PROCESSED, fs.ptsUs);
-                if (req.diagFrameDelayMs > 0) Thread.sleep(req.diagFrameDelayMs);
+                if (req.syncBeforePresent) {
+                    // diagnosis variant: wait for all queued GPU work (AI) before the final draw and the swap
+                    long g0 = System.nanoTime();
+                    android.opengl.GLES20.glFinish();
+                    if (n < 6) trace.event(String.format(Locale.US, "إطار %d: glFinish قبل الرسم النهائي %.1f ms", n, (System.nanoTime() - g0) / 1e6));
+                }
                 if (n == 0 && p.ai) {
                     report.append(String.format(Locale.US, "أول إطار AI: كلي %d ms · قراءة %d · extract شاملاً النقل الداخلي والمزامنة %d · رفع %d · بلاطات %d\n",
                             pipe.info.aiMs, pipe.info.aiReadMs, pipe.info.aiExtractMs, pipe.info.aiUploadMs, pipe.info.tiles));
@@ -400,8 +430,19 @@ public final class ExportJob implements Runnable {
                 }
                 u.put("uIn", out);
                 kit.runToSurface("present.frag", u, outW, outH);
-                egl.swap(ws.surface, (fs.ptsUs - offsetUs) * 1000L);
+                // the state the final draw used, before handing the buffer to the encoder
+                StringBuilder ef = new StringBuilder(), gf = new StringBuilder();
+                String eglBad = egl.checkCurrent(ws.surface, outW, outH, ef);
+                String glBad = com.mojahed.hdrstudio.gl.PresentCheck.gl(outW, outH, gf);
+                if (n < 3 || eglBad != null || glBad != null) trace.event("إطار " + n + " قبل التسليم: " + ef + " | " + gf);
+                if (eglBad != null || glBad != null)
+                    throw new IllegalStateException("حالة الرسم النهائي غير صحيحة في الإطار " + n + ": " + (eglBad == null ? "" : eglBad) + (glBad == null ? "" : glBad));
+                long ptsNs = (fs.ptsUs - offsetUs) * 1000L;
+                long s0 = System.nanoTime();
+                egl.swap(ws.surface, ptsNs);   // throws if eglPresentationTimeANDROID or eglSwapBuffers fails: the frame is not counted
+                if (n < 3) trace.event(String.format(Locale.US, "إطار %d: eglPresentationTimeANDROID(%d ns) و eglSwapBuffers نجحا (%.1f ms)", n, ptsNs, (System.nanoTime() - s0) / 1e6));
                 trace.frame(PipeTrace.SENT, fs.ptsUs - offsetUs);
+                if (req.diagProbe) probeAfterSwap(trace, n);
                 ve.checkError();
                 String stall = trace.encoderStall(STALL_FRAMES, STALL_MS);
                 if (stall != null) throw new IllegalStateException(stall);
@@ -414,7 +455,8 @@ public final class ExportJob implements Runnable {
             stage("إنهاء الترميز");
             trace.event("انتهت حلقة المعالجة: " + n + " إطار");
             ve.signalEndOfInput();
-            if (!ve.awaitEos(60_000)) throw new IllegalStateException("المرمّز لم ينهِ الملف خلال 60 ث بعد EOS");
+            if (!ve.awaitEos(req.eosWaitMs))
+                throw new IllegalStateException(String.format(Locale.US, "المرمّز لم ينهِ الملف خلال %d ث بعد EOS", req.eosWaitMs / 1000));
             trace.event("انتهى انتظار EOS");
             ve.checkError();
             if (audio != null) audio.pumpUntil(mux, Long.MAX_VALUE);
