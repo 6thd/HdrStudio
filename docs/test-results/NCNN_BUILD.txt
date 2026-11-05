@@ -139,3 +139,8 @@ was hashed. From run #5 on, BUILD_INFO lists every dex file and one hash over al
   versionCode 18 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (unchanged; ncnn decision carries over) · JVM 190/0/0
   test APK 6c3416949c4d2bd1df3c1a4320d9f8efb064703529b01133c5e3c5af4855d5dd (the phone report must print this)
   artifact zip digest 686b64c56f3471d880a0d07de471e4e34784432294f2e24ea02f92841f232884
+2.3.12-test, Actions run #12 attempt 2 (https://github.com/6thd/HdrStudio/actions/runs/42045907300; attempt 1 failed
+  before building: HTTP 504 downloading the Gradle distribution), commit a9c1b62: green.
+  versionCode 19 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (unchanged; ncnn decision carries over) · JVM 190/0/0
+  test APK 0f46e5f23a13ce03c640918d0954db3882033c4dc8d5d74752a02f61f51f0092 (the phone report must print this)
+  artifact zip digest c672d3911247db6498596508cce3d2aefc8039e92291e6e626eeac9abcc5f016
