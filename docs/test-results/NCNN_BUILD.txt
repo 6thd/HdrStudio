@@ -135,3 +135,7 @@ was hashed. From run #5 on, BUILD_INFO lists every dex file and one hash over al
   JVM 190 pass, 0 fail, 0 missing (TraceTests added)
   test APK 2fb99e741931989b61b4400a16d85b839745d17b423c7c4b8a092e5c7e7808a9 (the phone report must print this)
   artifact zip digest dac8ed6e7223b1566535c210e4454ab079a7f60016facb4f7675844bf41ff4f6
+2.3.11-test, Actions run #11 (https://github.com/6thd/HdrStudio/actions/runs/41994969683), commit 9d1f7b6: green.
+  versionCode 18 · certificate 1ffb4f14...4095a · native 3bf0be54...6d77 (unchanged; ncnn decision carries over) · JVM 190/0/0
+  test APK 6c3416949c4d2bd1df3c1a4320d9f8efb064703529b01133c5e3c5af4855d5dd (the phone report must print this)
+  artifact zip digest 686b64c56f3471d880a0d07de471e4e34784432294f2e24ea02f92841f232884
