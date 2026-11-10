@@ -78,3 +78,13 @@ inside the measured frame time. The diagnostic-only GPU fence probe and encoder-
 «تشخيص التصدير القصير»; the normal export has no diagnostic waits. The per-frame EGL/GL state check and the checked
 presentation time and swap stay in every export (they read state, they do not wait). Encoding, colours, model and
 acceptance unchanged.
+
+## 2.3.12 phone result (2026-11-10): A/B export passes
+
+Same APK as Actions run #12 (0f46e5f2…). 1-second SDR range 3.978–4.978 s, tile 512 for both, clean runs:
+- GLSL: DONE, 30 frames, 47 audio samples, 302.8 s; frame time median 10103 ms; glFinish wait median 1860 ms.
+- ncnn (FP16 storage + FP32 arithmetic): DONE, 30 frames, 47 audio samples, 123.3 s; frame time median 4077 ms.
+- Frames, video duration (0.968 s) and audio sample count match the source range. GLSL vs ncnn luma PSNR min 44.1 /
+  median 46.6 dB (both files H.264-compressed separately); motion median 3.06 for both against 3.08 for the source.
+The export path is fixed for both engines on this phone. One run each, one clip; the default stays GLSL.
+Full report: docs/test-results/AB_PHONE_2.3.12.txt.
