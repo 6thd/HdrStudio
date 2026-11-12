@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+test/
+*.hdrjob/
+models/*.pth
+models/*.onnx
+.claude/
+
+*.mp4
+*.rejected

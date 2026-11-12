@@ -62,3 +62,7 @@ tools/build_local.sh android-35.jar out/ key.jks <password>
 ```
 
 يتطلب: aapt وdalvik-exchange وzipalign وapksigner. المتطلبات وطريقة استخدامها مشروحة في رأس السكربت.
+
+## نسخة الحاسوب (Windows)
+
+تطبيق الحاسوب في مجلد [`pc/`](pc/README.md): نماذج AI أثقل، توليد إطارات 60fps، وإخراج HDR10 عبر FFmpeg.

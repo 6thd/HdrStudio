@@ -1,0 +1,7 @@
+numpy
+onnx
+onnxruntime-directml
+openvino
+moderngl
+pywebview
+pillow
