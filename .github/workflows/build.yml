@@ -47,7 +47,7 @@ jobs:
             echo "::warning::No HDR_KEYSTORE_BASE64 secret: test APK uses a throw-away debug key; release APK will be unsigned."
           fi
       - name: JVM unit tests (colour maths, metadata, scene cuts, HEVC bitstream parser)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg && tools/jvmtests/run.sh
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg python3-numpy && tools/jvmtests/run.sh
       - name: Build
         env:
           HDR_KEYSTORE_PASSWORD: ${{ secrets.HDR_KEYSTORE_PASSWORD }}
