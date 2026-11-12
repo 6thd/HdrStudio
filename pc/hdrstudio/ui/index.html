@@ -2,6 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
+<meta name="hdr-token" content="__HDR_TOKEN__">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HDR Studio</title>
 <link rel="stylesheet" href="style.css">
@@ -22,6 +23,7 @@
         <button class="btn primary big" id="pickBtn">اختر فيديو</button>
         <div class="or">أو ألصق المسار</div>
         <form id="pathForm" class="pathrow"><input id="pathInput" dir="ltr" placeholder="C:\Videos\clip.mp4" spellcheck="false"><button class="btn">فتح</button></form>
+        <div class="recent hidden" id="recent"><div class="or">آخر الملفات</div><div id="recentList"></div></div>
       </div>
     </div>
 
@@ -33,12 +35,12 @@
 
       <div class="viewer">
         <div class="pane">
-          <div class="pane-h"><span>الإطار — انقر لاختيار منطقة المعاينة</span><span class="mono" id="tLabel">0:00.0</span></div>
+          <div class="pane-h"><span><b>المصدر</b> انقر لاختيار منطقة المعاينة</span><span class="mono" id="tLabel">0:00.0</span></div>
           <div class="frame" id="frame"><img id="thumb" alt=""><div class="roi" id="roi"></div></div>
           <input type="range" id="tSlider" min="0" max="1" step="0.001" value="0" dir="ltr">
         </div>
         <div class="pane">
-          <div class="pane-h"><span>قبل / بعد بدقة الإخراج</span>
+          <div class="pane-h"><span><b>قبل / بعد</b> بدقة الإخراج</span>
             <span><span class="stale hidden" id="stale">الإعدادات تغيّرت</span><button class="btn small" id="previewBtn">معاينة</button></span></div>
           <div class="compare" id="compare" dir="ltr">
             <div class="cmp-empty" id="cmpEmpty">اضغط «معاينة» لمعالجة المنطقة المختارة بالإعدادات الحالية</div>
@@ -53,20 +55,34 @@
 
       <div class="exportbar">
         <div class="summary" id="summary"></div>
+        <div class="notes" id="notes"></div>
         <div class="outrow">
+          <label class="outlabel" for="outPath">الحفظ في</label>
           <input id="outPath" dir="ltr" spellcheck="false" placeholder="مكان الحفظ">
-          <button class="btn" id="outBtn">حفظ في…</button>
+          <button class="btn" id="outBtn">تغيير…</button>
           <button class="btn primary" id="exportBtn">تصدير</button>
         </div>
-        <div class="notes" id="notes"></div>
       </div>
     </div>
   </section>
 
   <aside class="panel" id="panel">
+    <div class="tabs" role="tablist">
+      <button class="tab on" data-tab="basic" role="tab">أساسي</button>
+      <button class="tab" data-tab="adv" role="tab">متقدم</button>
+      <button class="link" id="resetBtn" title="إرجاع كل الإعدادات إلى قيمها الافتراضية">إعادة الضبط</button>
+    </div>
+    <div class="tabpage" data-page="basic">
     <div class="sec">
-      <h3>الإخراج</h3>
+      <h3><i>1</i>الطابع</h3>
+      <div class="looks" id="looks"></div>
+      <div class="hint" id="lookHint"></div>
+    </div>
+
+    <div class="sec">
+      <h3><i>2</i>الإخراج</h3>
       <div class="cards" id="presetCards"></div>
+      <div class="hint" id="presetHint"></div>
       <label class="row"><span>الدقة</span>
         <select id="resolution">
           <option value="source">نفس دقة المصدر</option><option value="x2">×2</option>
@@ -77,50 +93,58 @@
     </div>
 
     <div class="sec">
-      <h3>استعادة التفاصيل بالذكاء الاصطناعي</h3>
+      <h3><i>3</i>استعادة التفاصيل بالذكاء الاصطناعي</h3>
       <div class="tiers" id="tiers"></div>
       <div class="hint" id="tierHint"></div>
-      <div class="slider" data-k="ai_amount" data-min="0" data-max="1" data-step="0.05" data-label="قوة AI"></div>
-      <div class="slider" data-k="ai_skin_protect" data-min="0" data-max="1" data-step="0.05" data-label="حماية البشرة"></div>
-      <div class="slider" data-k="ai_texture" data-min="0" data-max="1.5" data-step="0.05" data-label="إرجاع القوام الدقيق"></div>
+    </div>
+
+    <p class="tabnote">الطابع يضبط القيم الدقيقة تلقائياً. للتحكم اليدوي افتح تبويب «متقدم».</p>
+    </div>
+    <div class="tabpage hidden" data-page="adv">
+    <details class="sec" data-sec="ai" open>
+      <summary>ضبط الذكاء الاصطناعي</summary>
+      <div class="slider" data-k="ai_amount" title="نسبة ناتج النموذج في الصورة النهائية. أعلى = حواف أنظف وتفاصيل أكثر، وأقل = أقرب إلى المصدر." data-min="0" data-max="1" data-step="0.05" data-label="قوة AI"></div>
+      <div class="slider" data-k="ai_skin_protect" title="يخفّض حصة AI على درجات البشرة لتفادي المظهر الشمعي." data-min="0" data-max="1" data-step="0.05" data-label="حماية البشرة"></div>
+      <div class="slider" data-k="ai_texture" title="يعيد القوام الدقيق (خشب، قماش، بشرة) الذي يسطّحه النموذج. ارفعه إن بدت الصورة بلاستيكية، واخفضه إن ظهرت ضوضاء." data-min="0" data-max="1.5" data-step="0.05" data-label="إرجاع القوام الدقيق"></div>
       <label class="check"><input type="checkbox" data-k="allow_fp16"><span>السماح بدقة FP16 (أسرع نحو ×2، بخطأ حسابي صغير مقاس)</span></label>
-    </div>
+    </details>
 
-    <div class="sec">
-      <h3>التنظيف</h3>
-      <div class="slider" data-k="denoise_luma" data-min="0" data-max="1" data-step="0.05" data-label="ضوضاء الإضاءة"></div>
-      <div class="slider" data-k="denoise_chroma" data-min="0" data-max="1" data-step="0.05" data-label="ضوضاء الألوان"></div>
-      <div class="slider" data-k="grain_keep" data-min="0" data-max="1" data-step="0.05" data-label="الإبقاء على القوام"></div>
+    <details class="sec" data-sec="clean" open>
+      <summary>التنظيف</summary>
+      <div class="slider" data-k="denoise_luma" title="إزالة ضوضاء الإضاءة. القيم العالية تمسح التفاصيل الدقيقة." data-min="0" data-max="1" data-step="0.05" data-label="ضوضاء الإضاءة"></div>
+      <div class="slider" data-k="denoise_chroma" title="إزالة بقع الألوان في المناطق الداكنة." data-min="0" data-max="1" data-step="0.05" data-label="ضوضاء الألوان"></div>
+      <div class="slider" data-k="grain_keep" title="يُبقي جزءاً من الحبيبات الطبيعية حتى لا تبدو الصورة مسطحة." data-min="0" data-max="1" data-step="0.05" data-label="الإبقاء على القوام"></div>
       <label class="check"><input type="checkbox" data-k="temporal"><span>تثبيت زمني موجّه بالحركة</span></label>
-      <div class="slider" data-k="temporal_strength" data-min="0" data-max="0.9" data-step="0.05" data-label="قوة التثبيت الزمني"></div>
+      <div class="slider" data-k="temporal_strength" title="يثبّت الضوضاء بين الإطارات المتتالية مع تتبع الحركة." data-min="0" data-max="0.9" data-step="0.05" data-label="قوة التثبيت الزمني"></div>
       <label class="check"><input type="checkbox" data-k="deband"><span>منع التشريط في التدرجات</span></label>
-      <div class="slider" data-k="sharpen" data-min="0" data-max="1" data-step="0.05" data-label="الحدة النهائية"></div>
-    </div>
+      <div class="slider" data-k="sharpen" title="حدة نهائية بلا هالات. تُخفَّض تلقائياً على البشرة والمناطق المضجّة." data-min="0" data-max="1" data-step="0.05" data-label="الحدة النهائية"></div>
+    </details>
 
-    <div class="sec" id="hdrSec">
-      <h3>HDR</h3>
+    <details class="sec" id="hdrSec" data-sec="hdr" open>
+      <summary>HDR</summary>
       <label class="row"><span>قمة السطوع</span>
         <select data-k="peak" data-num="1"><option value="600">600 nit</option><option value="1000">1000 nit</option><option value="1500">1500 nit</option><option value="2000">2000 nit</option><option value="4000">4000 nit</option></select></label>
-      <div class="slider" data-k="expand" data-min="0" data-max="1" data-step="0.05" data-label="توسيع الإضاءات"></div>
-      <div class="slider" data-k="hdr_skin_protect" data-min="0" data-max="1" data-step="0.05" data-label="حماية البشرة"></div>
-    </div>
+      <div class="slider" data-k="expand" title="مقدار رفع الإضاءات العالية نحو قمة السطوع. 0 = سطوع SDR داخل حاوية HDR." data-min="0" data-max="1" data-step="0.05" data-label="توسيع الإضاءات"></div>
+      <div class="slider" data-k="hdr_skin_protect" title="يمنع توسيع HDR من تفتيح البشرة." data-min="0" data-max="1" data-step="0.05" data-label="حماية البشرة"></div>
+    </details>
 
-    <div class="sec">
-      <h3>اللون والترميز</h3>
-      <div class="slider" data-k="vibrance" data-min="-0.5" data-max="1" data-step="0.05" data-label="الحيوية"></div>
+    <details class="sec" data-sec="color" open>
+      <summary>اللون والترميز</summary>
+      <div class="slider" data-k="vibrance" title="يشبّع الألوان الباهتة أكثر من المشبعة، ويحمي البشرة." data-min="-0.5" data-max="1" data-step="0.05" data-label="الحيوية"></div>
       <label class="row"><span>منحنى المصدر SDR</span>
         <select data-k="sdr_gamma" data-num="1"><option value="0">BT.1886 (2.4)</option><option value="1">2.2</option></select></label>
-      <div class="slider" data-k="crf" data-min="0" data-max="28" data-step="1" data-label="CRF (0 = افتراضي الإعداد)"></div>
+      <div class="slider" data-k="crf" title="جودة الترميز: أقل = جودة أعلى وملف أكبر. 0 يستخدم قيمة الإعداد المختار." data-min="0" data-max="28" data-step="1" data-label="CRF (0 = افتراضي الإعداد)"></div>
       <label class="row"><span>سرعة المرمّز</span>
         <select data-k="enc_preset"><option>medium</option><option>slow</option><option>slower</option><option>veryslow</option></select></label>
-    </div>
+    </details>
 
-    <div class="sec">
-      <h3>المقطع</h3>
+    <details class="sec" data-sec="trim" open>
+      <summary>المقطع</summary>
       <div class="two">
         <label class="num"><span>البداية (ث)</span><input type="number" data-k="start" min="0" step="0.1" dir="ltr"></label>
         <label class="num"><span>المدة (ث، 0 = الكل)</span><input type="number" data-k="duration" min="0" step="0.1" dir="ltr"></label>
       </div>
+    </details>
     </div>
   </aside>
 </main>

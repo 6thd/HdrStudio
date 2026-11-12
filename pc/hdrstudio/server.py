@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import json
+import hmac
 import mimetypes
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -165,10 +167,19 @@ class App:
         return {"ok": True}
 
 
+MAX_BODY = 1 << 20
+CSP = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 ROUTES = {"system", "pick", "probe", "plan", "preview", "prepare", "prepare_status", "export", "cancel", "status", "reveal"}
 
 
-def make_handler(app: App):
+def make_handler(app, token: str):
+    """Request handler. The API starts exports, opens file dialogs and reads any path it is given,
+    so a web page open in the user's browser must not be able to call it:
+      - Host must be this loopback server (blocks DNS rebinding);
+      - Origin / Sec-Fetch-Site, when sent, must be same-origin (blocks cross-site requests);
+      - every /api/ call carries the per-run token that only our own page receives (in a meta
+        tag of index.html, which a cross-site page cannot read);
+      - the API is POST + application/json only, which a cross-site form cannot send."""
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -180,12 +191,24 @@ def make_handler(app: App):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", CSP)
             self.end_headers()
             self.wfile.write(body)
 
         def _local(self):
-            host = (self.headers.get("Host") or "").split(":")[0]
-            return host in ("127.0.0.1", "localhost")
+            port = self.server.server_address[1]
+            own = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            if (self.headers.get("Host") or "") not in own:
+                return False
+            origin = self.headers.get("Origin")
+            if origin is not None and origin not in {"http://" + h for h in own}:
+                return False
+            return self.headers.get("Sec-Fetch-Site") not in ("cross-site", "same-site")
+
+        def _authed(self, given):
+            return isinstance(given, str) and hmac.compare_digest(given.encode(), token.encode())
 
         def do_GET(self):
             if not self._local():
@@ -193,28 +216,44 @@ def make_handler(app: App):
             u = urlparse(self.path)
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
             try:
+                if u.path.startswith("/api/"):
+                    # images only (an <img> cannot send headers, so the token rides in the query)
+                    if u.path not in ("/api/thumb", "/api/live") or not self._authed(q.get("k")):
+                        return self._send(403, b"{}")
                 if u.path == "/api/thumb":
                     return self._send(200, media.thumbnail(q["path"], float(q.get("t", 0))), "image/jpeg")
                 if u.path == "/api/live":
                     j = app.job
                     return self._send(200, j.live, "image/jpeg") if j and j.live else self._send(404, b"")
-                if u.path.startswith("/api/"):
-                    return self._api(u.path[5:], q)
                 name = "index.html" if u.path in ("/", "") else u.path.lstrip("/")
                 f = (UI / name).resolve()
                 if UI.resolve() not in f.parents or not f.is_file():
                     return self._send(404, b"not found", "text/plain")
-                self._send(200, f.read_bytes(), (mimetypes.guess_type(f.name)[0] or "application/octet-stream") + "; charset=utf-8")
+                body = f.read_bytes()
+                if name == "index.html":
+                    body = body.replace(b"__HDR_TOKEN__", token.encode())
+                self._send(200, body, (mimetypes.guess_type(f.name)[0] or "application/octet-stream") + "; charset=utf-8")
             except Exception as e:
                 self._send(500, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
 
         def do_POST(self):
             if not self._local():
                 return self._send(403, b"{}")
-            n = int(self.headers.get("Content-Length") or 0)
+            if not self._authed(self.headers.get("X-HDR-Token")):
+                return self._send(403, b"{}")
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+                return self._send(415, b'{"error":"content type"}')
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not 0 <= n <= MAX_BODY:
+                return self._send(413, b'{"error":"body size"}')
             try:
                 q = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
+                return self._send(400, b'{"error":"bad json"}')
+            if not isinstance(q, dict):
                 return self._send(400, b'{"error":"bad json"}')
             self._api(urlparse(self.path).path[5:], q)
 
@@ -232,7 +271,7 @@ def make_handler(app: App):
 
 def serve(browser=False, port=0, open_ui=True):
     app = App()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+    srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app, secrets.token_urlsafe(32)))
     url = f"http://127.0.0.1:{srv.server_address[1]}/"
     print("HDR Studio:", url, flush=True)
     if not open_ui:

@@ -1,7 +1,8 @@
-numpy
-onnx
-onnxruntime-directml
-openvino
-moderngl
-pywebview
-pillow
+# Versions the app was built and tested with (Python 3.14, Windows 11).
+numpy==2.5.4
+onnx==1.23.2
+onnxruntime-directml==1.24.4
+openvino==2026.4.1
+moderngl==5.13.0
+pywebview==6.2.1
+pillow==13.0.0
