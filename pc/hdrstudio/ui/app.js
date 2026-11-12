@@ -2,8 +2,9 @@
 const $ = (id) => document.getElementById(id);
 const S = { sys: null, set: {}, src: null, t: 0, cx: 0.5, cy: 0.5, plan: null, logN: 0, liveN: -1, poll: null, prepPoll: null };
 
+const TOKEN = document.querySelector('meta[name="hdr-token"]').content;
 async function api(name, body) {
-  const r = await fetch("/api/" + name, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const r = await fetch("/api/" + name, { method: "POST", headers: { "Content-Type": "application/json", "X-HDR-Token": TOKEN }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({ error: "رد غير صالح" }));
   if (!r.ok || j.error) throw new Error(j.error || r.statusText);
   return j;
@@ -20,6 +21,52 @@ function dur(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
   return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0");
 }
+// Settings survive a restart; the file-specific ones (paths, trim) do not.
+const STORE = "hdrstudio.settings.v1", TRANSIENT = ["input", "output", "start", "duration"];
+function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } }
+function load(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
+function saveSettings() { const o = { ...S.set }; TRANSIENT.forEach((k) => delete o[k]); store(STORE, o); }
+function savedSettings() {
+  const o = load(STORE, {}), d = S.sys.defaults, out = {};
+  for (const k of Object.keys(d)) if (!TRANSIENT.includes(k) && typeof o[k] === typeof d[k]) out[k] = o[k];
+  if (!S.sys.presets[out.preset]) delete out.preset;
+  if (!S.sys.quality[out.quality]) delete out.quality;
+  return out;
+}
+// One-click starting points; every value stays editable afterwards.
+const LOOKS = [
+  { id: "natural", label: "طبيعي", note: "متوازن: تنظيف خفيف وألوان المصدر مع توسيع HDR معتدل.", set: {} },
+  { id: "crisp", label: "تفاصيل أوضح", note: "حدة وقوام أكثر وتنظيف أقل. للمصادر النظيفة.",
+    set: { sharpen: 0.5, ai_amount: 0.8, ai_texture: 1.0, denoise_luma: 0.2, grain_keep: 0.35 } },
+  { id: "rich", label: "ألوان أغنى", note: "حيوية أعلى بلا تشبّع مبالغ، وإضاءات HDR أقوى.",
+    set: { vibrance: 0.25, expand: 0.9 } },
+  { id: "clean", label: "نظيف ناعم", note: "تنظيف أقوى للمقاطع المضغوطة أو الليلية.",
+    set: { denoise_luma: 0.5, denoise_chroma: 0.7, grain_keep: 0.1, sharpen: 0.25, ai_texture: 0.4 } },
+];
+const LOOK_KEYS = ["sharpen", "ai_amount", "ai_texture", "denoise_luma", "denoise_chroma", "grain_keep", "vibrance", "expand"];
+const fmt = (v) => (+v).toFixed(2).replace(/\.?0+$/, "") || "0";
+function lookValues(l) { const o = {}; LOOK_KEYS.forEach((k) => { o[k] = k in l.set ? l.set[k] : S.sys.defaults[k]; }); return o; }
+function currentLook() { return LOOKS.find((l) => { const v = lookValues(l); return LOOK_KEYS.every((k) => Math.abs(S.set[k] - v[k]) < 1e-6); }); }
+function syncControls() {
+  document.querySelectorAll("[data-k]").forEach((el) => {
+    const k = el.dataset.k, v = S.set[k];
+    if (el.classList.contains("slider")) { el.querySelector("input").value = v; el.querySelector("output").textContent = fmt(v); }
+    else if (el.type === "checkbox") el.checked = !!v;
+    else el.value = String(v);
+  });
+  $("resolution").value = S.set.resolution;
+}
+function recentAdd(path) { store("hdrstudio.recent", [path, ...load("hdrstudio.recent", []).filter((p) => p !== path)].slice(0, 5)); }
+function renderRecent() {
+  const list = load("hdrstudio.recent", []).filter((p) => typeof p === "string"), el = $("recentList");
+  el.textContent = ""; $("recent").classList.toggle("hidden", !list.length);
+  for (const p of list) {
+    const b = document.createElement("button");
+    b.className = "recent-i"; b.dir = "ltr"; b.title = p; b.textContent = p.split(/[\\/]/).pop();
+    b.onclick = () => openSource(p); el.appendChild(b);
+  }
+}
+
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
 // ------------------------------------------------------------------ settings panel
@@ -33,6 +80,22 @@ function buildPanel() {
     b.onclick = () => { S.set.preset = id; changed(); };
     pc.appendChild(b);
   }
+  const lk = $("looks");
+  for (const l of LOOKS) {
+    const b = document.createElement("button");
+    b.className = "look"; b.dataset.id = l.id; b.textContent = l.label; b.title = l.note;
+    b.onclick = () => { Object.assign(S.set, lookValues(l)); syncControls(); changed(); };
+    lk.appendChild(b);
+  }
+  $("resetBtn").onclick = () => {
+    const keep = {}; TRANSIENT.forEach((k) => { keep[k] = S.set[k]; });
+    S.set = { ...S.sys.defaults, ...keep }; syncControls(); changed();
+  };
+  document.querySelectorAll("details[data-sec]").forEach((d) => {
+    const key = "hdrstudio.sec." + d.dataset.sec, v = load(key, null);
+    if (v !== null) d.open = !!v;
+    d.ontoggle = () => store(key, d.open);
+  });
   const tr = $("tiers");
   for (const [id, q] of Object.entries(S.sys.quality)) {
     const b = document.createElement("button");
@@ -63,6 +126,9 @@ function buildPanel() {
 function reflect() {
   document.querySelectorAll(".card").forEach((c) => c.classList.toggle("on", c.dataset.id === S.set.preset));
   document.querySelectorAll(".tier").forEach((c) => c.classList.toggle("on", c.dataset.id === S.set.quality));
+  const look = currentLook();
+  document.querySelectorAll(".look").forEach((c) => c.classList.toggle("on", !!look && c.dataset.id === look.id));
+  $("lookHint").textContent = look ? look.note : "إعدادات مخصّصة.";
   const hdrOut = S.sys.presets[S.set.preset].hdr, srcHdr = S.src && S.src.isHdr;
   $("hdrSec").classList.toggle("dis", !hdrOut || !!srcHdr);
   const q = S.sys.quality[S.set.quality], hint = $("tierHint");
@@ -93,7 +159,7 @@ const replan = debounce(async () => {
 }, 250);
 
 function changed() {
-  reflect();
+  reflect(); saveSettings();
   if ($("imgAfter").src) $("stale").classList.remove("hidden");
   replan();
 }
@@ -110,12 +176,17 @@ function renderSummary() {
   if (p.interp) parts.push(["توليد الإطارات", "RIFE ×2"]);
   if (p.estimate) {
     parts.push(["لكل إطار", `${p.estimate.secPerFrame} ث`]);
-    parts.push(["الزمن المتوقع", dur(p.estimate.totalSec)]);
+    parts.push(["الزمن المتوقع", dur(p.estimate.totalSec), p.estimate.totalSec > 3600 ? "long" : "est"]);
   } else if (p.model) parts.push(["الزمن المتوقع", "يُقاس عند أول معاينة"]);
   el.innerHTML = "";
-  for (const [k, v] of parts) {
+  for (const [k, v, cls] of parts) {
     const s = document.createElement("span"), b = document.createElement("b");
-    s.textContent = k + " "; b.textContent = v; s.appendChild(b); el.appendChild(s);
+    s.textContent = k + " "; b.textContent = v; s.appendChild(b); if (cls) s.className = cls; el.appendChild(s);
+  }
+  if (p.estimate && p.estimate.totalSec > 3600) {
+    const w = document.createElement("span");
+    w.className = "long note"; w.textContent = "تصدير طويل: يمكن إيقافه واستئنافه، أو اختيار مستوى AI أسرع.";
+    el.appendChild(w);
   }
   $("notes").textContent = (p.notes || []).join(" · ");
   $("exportBtn").textContent = p.resumable ? "استئناف التصدير" : "تصدير";
@@ -142,6 +213,7 @@ async function openSource(path) {
     const info = await api("probe", { path });
     S.src = info; S.set.input = info.path; S.set.output = info.suggestedOutput;
     S.t = Math.min(info.duration * 0.25, Math.max(0, info.duration - 0.1)); S.cx = S.cy = 0.5;
+    S.set.start = 0; S.set.duration = 0; syncControls(); recentAdd(info.path);
     $("empty").classList.add("hidden"); $("work").classList.remove("hidden");
     $("srcName").textContent = info.path.split(/[\\/]/).pop();
     const bits = [`${info.width}×${info.height}`, `${info.fps} fps${info.vfr ? " (متغير)" : ""}`, info.codec.toUpperCase() + " " + info.bitDepth + "-bit",
@@ -156,7 +228,7 @@ async function openSource(path) {
 }
 function loadThumb() {
   $("tLabel").textContent = dur(S.t) + "." + Math.floor((S.t % 1) * 10);
-  $("thumb").src = `/api/thumb?path=${encodeURIComponent(S.src.path)}&t=${S.t.toFixed(3)}`;
+  $("thumb").src = `/api/thumb?path=${encodeURIComponent(S.src.path)}&t=${S.t.toFixed(3)}&k=${TOKEN}`;
 }
 function drawRoi() {
   const img = $("thumb"), roi = $("roi");
@@ -224,7 +296,7 @@ async function pollStatus() {
   $("stFps").textContent = j.fps ? (j.fps >= 1 ? j.fps.toFixed(1) : j.fps.toFixed(3)) : "—";
   $("stElapsed").textContent = dur(j.elapsed); $("stEta").textContent = dur(j.eta);
   if (st.liveN !== S.liveN && st.liveN > 0) {
-    S.liveN = st.liveN; $("liveImg").src = "/api/live?n=" + st.liveN; $("liveEmpty").classList.add("hidden");
+    S.liveN = st.liveN; $("liveImg").src = "/api/live?n=" + st.liveN + "&k=" + TOKEN; $("liveEmpty").classList.add("hidden");
   }
   if (["done", "error", "cancelled"].includes(j.state)) {
     clearInterval(S.poll);
@@ -255,7 +327,7 @@ function renderReport(r) {
 
 // ------------------------------------------------------------------ boot
 async function refreshSystem() {
-  S.sys = await (await fetch("/api/system")).json();
+  S.sys = await api("system");
   const chips = $("chips"); chips.innerHTML = "";
   const add = (txt, bad) => { const c = document.createElement("span"); c.className = "chip" + (bad ? " bad" : ""); c.innerHTML = "<i></i>"; c.append(txt); chips.appendChild(c); };
   const gpu = S.sys.backends.find((b) => /GPU|NVIDIA/.test(b));
@@ -265,7 +337,8 @@ async function refreshSystem() {
 async function boot() {
   await refreshSystem();
   S.set = { ...S.sys.defaults };
-  buildPanel(); reflect();
+  Object.assign(S.set, savedSettings());
+  buildPanel(); reflect(); renderRecent();
   $("pickBtn").onclick = $("changeBtn").onclick = async () => { const r = await api("pick", { kind: "open" }); if (r.path) openSource(r.path); };
   $("pathForm").onsubmit = (e) => { e.preventDefault(); const p = $("pathInput").value.trim().replace(/^"|"$/g, ""); if (p) openSource(p); };
   $("outBtn").onclick = async () => { const r = await api("pick", { kind: "save", initial: $("outPath").value }); if (r.path) { $("outPath").value = r.path; S.set.output = r.path; replan(); } };

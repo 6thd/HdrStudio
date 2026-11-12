@@ -25,6 +25,15 @@
 
 `--quality`: ‏`off` · `fast` · `detail` · `high` · `max`. ‏`--fps x2` يولّد إطارات بينية (30 ← 60). أي إعداد آخر عبر `--set`، مثل `--set sharpen=0.5`.
 
+## الاختبارات
+
+```
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest tests -q
+```
+
+تعمل على CPU فقط: حماية واجهة API المحلية، التخطيط، وسائط المرمّز، ترقيع HDR10 SEI، وتحويل النماذج إلى ONNX. مسار GPU والتصدير الكامل يُختبران يدوياً (`tools/test_resume.py`).
+
 ## النماذج
 
 | الملف | المصدر | الترخيص |
