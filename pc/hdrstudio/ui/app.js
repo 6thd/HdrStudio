@@ -91,6 +91,13 @@ function buildPanel() {
     const keep = {}; TRANSIENT.forEach((k) => { keep[k] = S.set[k]; });
     S.set = { ...S.sys.defaults, ...keep }; syncControls(); changed();
   };
+  const showTab = (id) => {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === id));
+    document.querySelectorAll(".tabpage").forEach((p) => p.classList.toggle("hidden", p.dataset.page !== id));
+    $("panel").scrollTop = 0; store("hdrstudio.tab", id);
+  };
+  document.querySelectorAll(".tab").forEach((t) => { t.onclick = () => showTab(t.dataset.tab); });
+  if (load("hdrstudio.tab", "basic") === "adv") showTab("adv");
   document.querySelectorAll("details[data-sec]").forEach((d) => {
     const key = "hdrstudio.sec." + d.dataset.sec, v = load(key, null);
     if (v !== null) d.open = !!v;
@@ -129,6 +136,7 @@ function reflect() {
   const look = currentLook();
   document.querySelectorAll(".look").forEach((c) => c.classList.toggle("on", !!look && c.dataset.id === look.id));
   $("lookHint").textContent = look ? look.note : "إعدادات مخصّصة.";
+  $("presetHint").textContent = S.sys.presets[S.set.preset].note;
   const hdrOut = S.sys.presets[S.set.preset].hdr, srcHdr = S.src && S.src.isHdr;
   $("hdrSec").classList.toggle("dis", !hdrOut || !!srcHdr);
   const q = S.sys.quality[S.set.quality], hint = $("tierHint");
@@ -180,13 +188,11 @@ function renderSummary() {
   } else if (p.model) parts.push(["الزمن المتوقع", "يُقاس عند أول معاينة"]);
   el.innerHTML = "";
   for (const [k, v, cls] of parts) {
-    const s = document.createElement("span"), b = document.createElement("b");
-    s.textContent = k + " "; b.textContent = v; s.appendChild(b); if (cls) s.className = cls; el.appendChild(s);
+    const s = document.createElement("div"), l = document.createElement("span"), b = document.createElement("b");
+    l.textContent = k; b.textContent = v; s.append(l, b); s.className = "kv" + (cls ? " " + cls : ""); el.appendChild(s);
   }
   if (p.estimate && p.estimate.totalSec > 3600) {
-    const w = document.createElement("span");
-    w.className = "long note"; w.textContent = "تصدير طويل: يمكن إيقافه واستئنافه، أو اختيار مستوى AI أسرع.";
-    el.appendChild(w);
+    p.notes = [...(p.notes || []), "تصدير طويل: يمكن إيقافه واستئنافه، أو اختيار مستوى AI أسرع"];
   }
   $("notes").textContent = (p.notes || []).join(" · ");
   $("exportBtn").textContent = p.resumable ? "استئناف التصدير" : "تصدير";
