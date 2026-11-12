@@ -12,7 +12,10 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main]
+    branches: [main, work/v2.2]
+    paths-ignore: ["pc/**"]
+  pull_request:
+    paths-ignore: ["pc/**"]
 
 permissions:
   contents: read          # no automatic public releases; APKs are workflow artifacts
