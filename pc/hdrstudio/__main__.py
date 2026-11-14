@@ -32,7 +32,7 @@ def main(argv=None):
     e = sub.add_parser("export")
     e.add_argument("input")
     e.add_argument("-o", "--output", required=True)
-    e.add_argument("--preset", default="tiktok_hdr", choices=["tiktok_hdr", "tiktok_sdr", "hdr10_master", "sdr_master"])
+    e.add_argument("--preset", default="tiktok_hdr", choices=["tiktok_hdr", "tiktok_hlg", "tiktok_sdr", "hdr10_master", "sdr_master"])
     e.add_argument("--quality", default="fast", choices=["off", "fast", "detail", "high", "max"])
     e.add_argument("--resolution", default="source", help="source | x2 | 1080 | 1440 | 2160 (short side)")
     e.add_argument("--start", type=float, default=0.0)

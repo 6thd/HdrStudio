@@ -40,7 +40,7 @@
           <input type="range" id="tSlider" min="0" max="1" step="0.001" value="0" dir="ltr">
         </div>
         <div class="pane">
-          <div class="pane-h"><span><b>قبل / بعد</b> بدقة الإخراج</span>
+          <div class="pane-h"><span><b>قبل / بعد</b> بدقة الإخراج · معاينة SDR</span>
             <span><span class="stale hidden" id="stale">الإعدادات تغيّرت</span><button class="btn small" id="previewBtn">معاينة</button></span></div>
           <div class="compare" id="compare" dir="ltr">
             <div class="cmp-empty" id="cmpEmpty">اضغط «معاينة» لمعالجة المنطقة المختارة بالإعدادات الحالية</div>
@@ -49,6 +49,7 @@
             <span class="tag l">قبل</span><span class="tag r">بعد</span>
             <div class="spin hidden" id="cmpSpin"><div class="ring"></div><span id="cmpSpinText">معالجة…</span></div>
           </div>
+          <div class="pane-note hidden" id="prevNote">المعاينة بصيغة SDR: تُظهر التفاصيل والتنظيف والحدة. إضاءات HDR وألوانه النهائية لا تظهر هنا؛ احكم عليها من الملف المصدَّر على شاشة HDR.</div>
           <div class="pane-f mono" id="prevInfo"></div>
         </div>
       </div>
@@ -122,10 +123,13 @@
 
     <details class="sec" id="hdrSec" data-sec="hdr" open>
       <summary>HDR</summary>
+      <label class="check"><input type="checkbox" data-k="hdr10plus"><span>HDR10+ : بيانات إضاءة لكل مشهد (تحليل إضافي قبل التصدير)</span></label>
+      <div id="hdrExpand">
       <label class="row"><span>قمة السطوع</span>
         <select data-k="peak" data-num="1"><option value="600">600 nit</option><option value="1000">1000 nit</option><option value="1500">1500 nit</option><option value="2000">2000 nit</option><option value="4000">4000 nit</option></select></label>
       <div class="slider" data-k="expand" title="مقدار رفع الإضاءات العالية نحو قمة السطوع. 0 = سطوع SDR داخل حاوية HDR." data-min="0" data-max="1" data-step="0.05" data-label="توسيع الإضاءات"></div>
       <div class="slider" data-k="hdr_skin_protect" title="يمنع توسيع HDR من تفتيح البشرة." data-min="0" data-max="1" data-step="0.05" data-label="حماية البشرة"></div>
+      </div>
     </details>
 
     <details class="sec" data-sec="color" open>

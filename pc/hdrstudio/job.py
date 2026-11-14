@@ -23,12 +23,17 @@ from pathlib import Path
 import numpy as np
 
 from . import ai, media, models, rife
+from . import hdr10plus
 from .glkit import GlKit
 from .pipeline import FramePipeline, Params
+
+HLG_PEAK = 1000.0       # nominal display peak the HLG signal is written for (BT.2100)
 
 PRESETS = {
     "tiktok_hdr": {"label": "TikTok HDR10", "codec": "hevc", "hdr": True, "bits": 10, "crf": 15, "maxShort": 2160, "maxFps": 60,
                    "note": "HEVC Main10 · PQ · BT.2020 — يرفع من الهاتف أو الحاسوب؛ تيك توك يعيد الترميز دائماً"},
+    "tiktok_hlg": {"label": "TikTok HLG", "codec": "hevc", "hdr": True, "trc": "hlg", "bits": 10, "crf": 15, "maxShort": 2160, "maxFps": 60,
+                   "note": "HEVC Main10 · HLG · BT.2020 — صيغة HDR التي تصوّر بها الهواتف؛ تظهر صحيحة أيضاً على شاشات SDR"},
     "tiktok_sdr": {"label": "TikTok SDR (H.264)", "codec": "h264", "hdr": False, "bits": 8, "crf": 14, "maxShort": 1080, "maxFps": 60,
                    "note": "H.264 High · BT.709 · 1080p — أعلى توافق"},
     "hdr10_master": {"label": "HDR10 رئيسي", "codec": "hevc", "hdr": True, "bits": 10, "crf": 13, "maxShort": 0, "maxFps": 0,
@@ -73,6 +78,7 @@ class Settings:
     start: float = 0.0
     duration: float = 0.0           # 0 = to the end
     fps_mode: str = "source"        # source | x2 (RIFE frame interpolation)
+    hdr10plus: bool = False         # HDR10+ scene metadata on top of HDR10 (needs an extra analysis pass)
 
     @classmethod
     def from_dict(cls, d):
@@ -91,6 +97,7 @@ class Plan:
     frames: int                     # frames written to the file
     interp: bool = False            # one generated frame between every two source frames
     src_fps: float = 30.0
+    hdr10plus: bool = False         # HDR10+ scene metadata (PQ output only)
 
 
 def _even(v):
@@ -139,12 +146,19 @@ def plan(s: Settings, si: media.SourceInfo) -> Plan:
     if pr["maxFps"] and float(fps) > pr["maxFps"]:
         notes.append(f"معدل الإطارات {float(fps):.2f} أعلى من حد الإعداد {pr['maxFps']}؛ يُحتفظ بالمعدل الأصلي")
     enc = media.EncodeConfig(codec=pr["codec"], hdr=pr["hdr"], bit_depth=pr["bits"], crf=s.crf or pr["crf"], preset=s.enc_preset,
-                             width=out_w, height=out_h, fps=fps, peak=s.peak)
+                             width=out_w, height=out_h, fps=fps, peak=s.peak, trc=pr.get("trc", "pq"))
+    if enc.hdr and enc.trc == "hlg" and p.peak > HLG_PEAK:
+        p.peak = enc.peak = HLG_PEAK
+        notes.append(f"HLG: قمة السطوع محدودة بـ{HLG_PEAK:g} nit (العرض المرجعي للصيغة)")
+    dyn = bool(s.hdr10plus) and enc.hdr and enc.trc == "pq"
+    if s.hdr10plus and not dyn:
+        notes.append("HDR10+ يعمل مع إخراج HDR10 (PQ) فقط؛ أُهمل لهذا الإعداد")
     dur = si.duration - s.start
     if s.duration > 0:
         dur = min(dur, s.duration)
-    frames = max(1, int(round(dur * float(fps)))) if (s.start > 0 or s.duration > 0) else si.frames
-    return Plan(p, enc, model, lr_w, lr_h, notes, frames * 2 if interp else frames, interp, float(si.fps))
+    # source frames first; interpolation writes exactly two frames for each of them
+    src_frames = max(1, int(round(dur * float(si.fps)))) if (s.start > 0 or s.duration > 0) else si.frames
+    return Plan(p, enc, model, lr_w, lr_h, notes, src_frames * 2 if interp else src_frames, interp, float(si.fps), hdr10plus=dyn)
 
 
 def pick_backend(bench: dict, allow_fp16: bool) -> dict:
@@ -382,7 +396,7 @@ class ExportJob:
         self._set(state="running", stage="فحص المصدر")
         si = media.probe(s.input)
         pl = plan(s, si)
-        out = Path(s.output)
+        out = Path(s.output).resolve()      # the encoder runs in the job folder: relative paths would break
         out.parent.mkdir(parents=True, exist_ok=True)
         jd = Path(str(out) + ".hdrjob")
         jd.mkdir(exist_ok=True)
@@ -417,6 +431,7 @@ class ExportJob:
             self._set(stage="تجهيز نموذج توليد الإطارات")
             interp = _interpolator(eng, p.out_w, p.out_h, self.log)
             self.log(f"توليد الإطارات: RIFE v4.6 على {interp.backend['label']} — {interp.backend['frameS']} ث/إطار")
+        dyn = self._scene_metadata(eng, si, pl, jd, key) if pl.hdr10plus else None
         dec = media.Decoder(si, start=s.start, duration=s.duration or None)
         inp = _Input(k, si, dec, p.work_domain)
         pipe = FramePipeline(k, dec.w, dec.h, p, sr)
@@ -427,7 +442,8 @@ class ExportJob:
         tw = min(640, p.out_w) // 2 * 2
         th = max(2, round(p.out_h * tw / p.out_w))
         thumb_tmp, thumb = k.tex(tw, p.out_h), k.tex(tw, th)
-        yuv_u = {"uMatrix": 1 if enc_cfg.hdr else 0, "uBitDepth": float(enc_cfg.bit_depth), "uDither": True}
+        yuv_u = {"uMatrix": 1 if enc_cfg.hdr else 0, "uBitDepth": float(enc_cfg.bit_depth), "uDither": True,
+                 "uToHlg": 1 if enc_cfg.hdr and enc_cfg.trc == "hlg" else 0, "uHlgPeak": HLG_PEAK}
         # chunks hold an even number of frames, so with interpolation a chunk always ends on a
         # generated frame and a resume starts cleanly on a source frame
         chunk_frames = max(2, round(float(enc_cfg.fps) * 2) // 2 * 2)
@@ -447,7 +463,12 @@ class ExportJob:
             if enc_cfg.bit_depth == 8:
                 Y, C = Y.astype(np.uint8), C.astype(np.uint8)
             if ctx["enc"] is None:
-                ctx["enc"] = media.Encoder(enc_cfg, jd / f"chunk_{len(st['chunks']):05d}{enc_cfg.ext}", jd / "encoder.log")
+                name, meta_name = f"chunk_{len(st['chunks']):05d}", ""
+                if dyn:
+                    first = ctx["written"]
+                    meta_name = name + ".json"
+                    hdr10plus.chunk_json(dyn, [(j // 2 if interp else j) for j in range(first, min(first + chunk_frames, pl.frames))], jd / meta_name)
+                ctx["enc"] = media.Encoder(enc_cfg, jd / (name + enc_cfg.ext), jd / "encoder.log", meta_name)
             ctx["enc"].write(Y.tobytes(), np.ascontiguousarray(C[..., 0]).tobytes(), np.ascontiguousarray(C[..., 1]).tobytes())
             ctx["written"] += 1
             ctx["new"] += 1
@@ -521,10 +542,11 @@ class ExportJob:
         cll, fall = media.safe_cll(round(st["maxCll"]), round(st["maxFall"]))
         tmp = jd / ("out" + (out.suffix or ".mp4"))
         media.mux([jd / c["file"] for c in st["chunks"]], enc_cfg, si, tmp, start=s.start, frames=total)
-        patched = media.patch_cll(tmp, cll, fall) if enc_cfg.hdr else 0
+        hdr10 = enc_cfg.hdr and enc_cfg.trc == "pq"
+        patched = media.patch_cll(tmp, cll, fall) if hdr10 else 0
         self._set(stage="فحص الملف الناتج")
-        rep = media.verify(tmp, enc_cfg, total, bool(si.audio_codec))
-        if enc_cfg.hdr:
+        rep = media.verify(tmp, enc_cfg, total, bool(si.audio_codec), want_hdr10plus=pl.hdr10plus)
+        if hdr10:
             rep["measuredMaxCll"], rep["measuredMaxFall"], rep["seiPatched"] = cll, fall, patched
             if rep.get("maxCll") != cll or rep.get("maxFall") != fall:
                 rep["problems"].append(f"MaxCLL/MaxFALL في الملف {rep.get('maxCll')}/{rep.get('maxFall')} ≠ المقاس {cll}/{fall}")
@@ -542,6 +564,44 @@ class ExportJob:
         self._lock.close()
         shutil.rmtree(jd, ignore_errors=True)
         self.log(f"تم: {out} — {total} إطار في {rep['seconds']} ث")
+
+    def _scene_metadata(self, eng, si, pl, jd, key):
+        """HDR10+ analysis pass (see hdr10plus.py): scene statistics of the whole clip, measured
+        once without AI at reduced size and kept in the job folder for resumed runs."""
+        cache = jd / "hdr10plus.json"
+        try:
+            old = json.loads(cache.read_text("utf-8"))
+            if old.get("key") == key:
+                return old["meta"]
+        except Exception:
+            pass
+        s, k = self.s, eng.k
+        aw, ah = hdr10plus.analysis_size(pl.params.out_w, pl.params.out_h)
+        ap = Params.from_dict({**pl.params.to_dict(), "out_w": aw, "out_h": ah, "ai": False, "temporal": False})
+        dec = media.Decoder(si, start=s.start, duration=s.duration or None)
+        inp = _Input(k, si, dec, ap.work_domain)
+        pipe = FramePipeline(k, dec.w, dec.h, ap, None)
+        acc, total = hdr10plus.Accumulator(), max(1, pl.frames // (2 if pl.interp else 1))
+        try:
+            while True:
+                self._check()
+                planes = dec.read()
+                if planes is None:
+                    break
+                fin = pipe.process(inp.load(planes), 1.0 / pl.src_fps)
+                acc.add(hdr10plus.FrameStats(k.read(fin)[..., :3]), bool(pipe.info.get("cut")))
+                if acc.frames % 10 == 0:
+                    self._set(stage=f"تحليل المشاهد لبيانات HDR10+ ({acc.frames}/{total})")
+        finally:
+            dec.close()
+            pipe.release()
+            inp.release()
+        if not acc.frames:
+            raise RuntimeError("تعذّر تحليل المصدر لبيانات HDR10+")
+        meta = acc.finish()
+        cache.write_text(json.dumps({"key": key, "meta": meta}), "utf-8")
+        self.log(f"HDR10+: {len(meta['scenes'])} مشهد من {acc.frames} إطاراً")
+        return meta
 
     def _close_chunk(self, enc, st, pipe, state_f):
         enc.close()

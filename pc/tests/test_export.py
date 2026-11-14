@@ -2,6 +2,7 @@
 and resuming after the process is killed. Needs FFmpeg and an OpenGL 3.3 context, so it is
 skipped on machines without them (hosted CI runners have no GPU)."""
 import json
+import os
 import subprocess
 import sys
 import time
@@ -89,6 +90,41 @@ def test_hdr10_export_is_valid(clip, tmp_path):
     si = media.probe(str(tmp_path / "hdr.mp4"))
     assert si.is_hdr and si.bit_depth == 10 and si.max_cll == rep["maxCll"]
     assert not Path(str(tmp_path / "hdr.mp4") + ".hdrjob").exists()        # job directory removed on success
+
+
+def test_hlg_export_is_valid(clip, tmp_path):
+    rep = _export(clip, tmp_path / "hlg.mp4", "--preset", "tiktok_hlg")
+    assert rep["ok"], rep["problems"]
+    assert (rep["primaries"], rep["transfer"], rep["matrix"]) == ("bt2020", "arib-std-b67", "bt2020nc")
+    assert rep["frames"] == FRAMES and media.probe(str(tmp_path / "hlg.mp4")).transfer == 2
+
+
+def test_hdr10plus_on_every_frame_and_per_scene(clip, tmp_path):
+    out = tmp_path / "dyn.mp4"
+    rep = _export(clip, out, "--preset", "tiktok_hdr", "--set", "hdr10plus=true")
+    assert rep["ok"], rep["problems"]
+    assert rep["hdr10plus"]["maxSclNits"] > 0 and rep["seiPatched"] >= 1
+    r = media.run([media.ffprobe(), "-v", "error", "-select_streams", "v:0", "-show_frames", "-show_entries", "frame=side_data_list",
+                   "-print_format", "json", str(out)])
+    keys = []
+    for fr in json.loads(r.stdout)["frames"]:
+        sd = [s for s in fr.get("side_data_list", []) if "2094-40" in s.get("side_data_type", "")]
+        assert sd, "a frame without HDR10+ metadata"
+        keys.append((sd[0]["maxscl"], sd[0]["average_maxrgb"]))
+    assert len(keys) == FRAMES
+    changes = [i for i in range(1, FRAMES) if keys[i] != keys[i - 1]]
+    assert changes == [FRAMES // 2], "metadata must change at the scene cut and nowhere else"
+
+
+def test_relative_output_path(clip, tmp_path):
+    """`-o exports/out.mp4` from another working directory, with and without HDR10+ metadata."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    for name, extra in (("plain.mp4", []), ("dyn.mp4", ["--set", "hdr10plus=true"])):
+        r = subprocess.run([sys.executable, "-m", "hdrstudio", "export", str(clip), "-o", f"exports/{name}", "--quality", "off",
+                            "--duration", "1", *extra], cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=600)
+        assert (tmp_path / "exports" / name).exists(), r.stdout[-800:]
+        assert '"ok": true' in r.stdout
+    assert not (tmp_path / "exports" / "exports").exists()
 
 
 def test_sdr_export_is_valid(clip, tmp_path):

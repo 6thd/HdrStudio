@@ -138,7 +138,9 @@ function reflect() {
   $("lookHint").textContent = look ? look.note : "إعدادات مخصّصة.";
   $("presetHint").textContent = S.sys.presets[S.set.preset].note;
   const hdrOut = S.sys.presets[S.set.preset].hdr, srcHdr = S.src && S.src.isHdr;
-  $("hdrSec").classList.toggle("dis", !hdrOut || !!srcHdr);
+  $("hdrSec").classList.toggle("dis", !hdrOut);
+  $("hdrExpand").classList.toggle("dis", !!srcHdr);          // an HDR source keeps its own light levels
+  $("prevNote").classList.toggle("hidden", !hdrOut);
   const q = S.sys.quality[S.set.quality], hint = $("tierHint");
   hint.textContent = "";
   if (q.model) {
@@ -177,11 +179,12 @@ function renderSummary() {
   if (!p) { el.textContent = ""; return; }
   const parts = [
     ["الناتج", `${p.outW}×${p.outH} · ${p.fps} fps`],
-    ["الترميز", `${p.codec === "hevc" ? "HEVC" : "H.264"} ${p.hdr ? "HDR10" : "SDR"} · CRF ${p.crf}`],
+    ["الترميز", `${p.codec === "hevc" ? "HEVC" : "H.264"} ${p.hdr ? (p.trc === "hlg" ? "HLG" : "HDR10") : "SDR"} · CRF ${p.crf}`],
     ["الإطارات", p.frames],
   ];
   if (p.model) parts.push(["دخل AI", `${p.lrW}×${p.lrH}`]);
   if (p.interp) parts.push(["توليد الإطارات", "RIFE ×2"]);
+  if (p.hdr10plus) parts.push(["بيانات ديناميكية", "HDR10+"]);
   if (p.estimate) {
     parts.push(["لكل إطار", `${p.estimate.secPerFrame} ث`]);
     parts.push(["الزمن المتوقع", dur(p.estimate.totalSec), p.estimate.totalSec > 3600 ? "long" : "est"]);

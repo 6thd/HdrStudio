@@ -260,6 +260,7 @@ class EncodeConfig:
     height: int = 0
     fps: Fraction = Fraction(30)
     peak: float = 1000.0
+    trc: str = "pq"             # HDR transfer: pq (HDR10) | hlg
     maxrate_kbps: int = 0       # 0 = unconstrained CRF
 
     ext = ".mp4"                # chunks are MP4: the encoder's own timestamps survive (B-frame order)
@@ -267,6 +268,13 @@ class EncodeConfig:
     @property
     def pix_fmt(self):
         return "yuv420p10le" if self.bit_depth == 10 else "yuv420p"
+
+
+def color_tags(c: "EncodeConfig") -> tuple:
+    """(primaries, transfer, matrix) names as FFmpeg and x265 spell them."""
+    if not c.hdr:
+        return "bt709", "bt709", "bt709"
+    return "bt2020", "arib-std-b67" if c.trc == "hlg" else "smpte2084", "bt2020nc"
 
 
 def master_display(peak: float) -> str:
@@ -277,11 +285,11 @@ def master_display(peak: float) -> str:
 PLACEHOLDER_CLL = (1000, 400)
 
 
-def encoder_args(c: EncodeConfig, out: str) -> list:
+def encoder_args(c: EncodeConfig, out: str, dhdr10: str = "") -> list:
     a = [ffmpeg(), "-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pix_fmt", c.pix_fmt, "-s", f"{c.width}x{c.height}",
          "-r", str(c.fps), "-i", "-", "-an", "-pix_fmt", c.pix_fmt]
     gop = max(1, round(float(c.fps) * 2))
-    prim, trc, mat = ("bt2020", "smpte2084", "bt2020nc") if c.hdr else ("bt709", "bt709", "bt709")
+    prim, trc, mat = color_tags(c)
     a += ["-color_primaries", prim, "-color_trc", trc, "-colorspace", mat, "-color_range", "tv"]
     if c.codec == "hevc":
         x = [f"keyint={gop}", "min-keyint=1", "repeat-headers=1", "aud=1", "info=0", "open-gop=0", f"colorprim={prim}", f"transfer={trc}",
@@ -290,8 +298,10 @@ def encoder_args(c: EncodeConfig, out: str) -> list:
         # texture, worst in dark areas (measured on a dark fabric: half the detail energy lost).
         # aq-mode=3 biases bits to dark blocks; psy-rd/psy-rdoq keep texture energy; no SAO.
         x += [e for e in os.environ.get("HDRSTUDIO_X265", "sao=0:aq-mode=3:aq-strength=1.0:psy-rd=2.0:psy-rdoq=1.5:deblock=-1,-1").split(":") if e]
-        if c.hdr:
+        if c.hdr and c.trc == "pq":
             x += ["hdr10=1", "master-display=" + master_display(c.peak), "max-cll=%d,%d" % PLACEHOLDER_CLL]
+            if dhdr10:              # HDR10+ scene metadata: a file name relative to the encoder's working directory
+                x += [f"dhdr10-info={dhdr10}"]
         if c.maxrate_kbps:
             x += [f"vbv-maxrate={c.maxrate_kbps}", f"vbv-bufsize={c.maxrate_kbps * 2}"]
         a += ["-c:v", "libx265", "-preset", c.preset, "-crf", f"{c.crf:g}", "-profile:v", "main10" if c.bit_depth == 10 else "main",
@@ -306,10 +316,12 @@ def encoder_args(c: EncodeConfig, out: str) -> list:
 
 
 class Encoder:
-    def __init__(self, c: EncodeConfig, out: Path, log: Path):
+    def __init__(self, c: EncodeConfig, out: Path, log: Path, dhdr10: str = ""):
+        out = Path(out).resolve()
         self.out, self._log = out, open(log, "ab")
-        self.proc = subprocess.Popen(encoder_args(c, str(out)), stdin=subprocess.PIPE, stderr=self._log, stdout=self._log,
-                                     creationflags=NO_WINDOW)
+        # the metadata file is named relative to cwd: an absolute Windows path has a ':' that x265-params cannot carry
+        self.proc = subprocess.Popen(encoder_args(c, str(out), dhdr10), stdin=subprocess.PIPE, stderr=self._log, stdout=self._log,
+                                     creationflags=NO_WINDOW, cwd=str(Path(out).parent))
         self.frames = 0
 
     def write(self, *planes):
@@ -409,7 +421,7 @@ def mux(chunks: list, c: EncodeConfig, si: SourceInfo, out: Path, start=0.0, fra
         raise RuntimeError("فشل الدمج: " + r.stderr.decode("utf-8", "replace")[-500:])
 
 
-def verify(out: Path, c: EncodeConfig, frames: int, want_audio: bool) -> dict:
+def verify(out: Path, c: EncodeConfig, frames: int, want_audio: bool, want_hdr10plus: bool = False) -> dict:
     """Checks the finished file before it is handed over: tags, frame count, audio, HDR side data."""
     r = run([ffprobe(), "-v", "error", "-count_packets", "-print_format", "json", "-show_streams", "-show_format", str(out)])
     d = json.loads(r.stdout or b"{}")
@@ -423,14 +435,14 @@ def verify(out: Path, c: EncodeConfig, frames: int, want_audio: bool) -> dict:
     problems = []
     if rep["frames"] != frames:
         problems.append(f"عدد الإطارات {rep['frames']} ≠ {frames}")
-    want = ("bt2020", "smpte2084", "bt2020nc") if c.hdr else ("bt709", "bt709", "bt709")
+    want = color_tags(c)
     if (rep["primaries"], rep["transfer"], rep["matrix"]) != want:
         problems.append(f"وسوم الألوان {rep['primaries']}/{rep['transfer']}/{rep['matrix']}")
     if rep["pixFmt"] != c.pix_fmt.replace("le", "") and rep["pixFmt"] != c.pix_fmt:
         problems.append(f"صيغة البكسل {rep['pixFmt']}")
     if want_audio and not au:
         problems.append("الصوت مفقود")
-    if c.hdr:
+    if c.hdr and c.trc == "pq":
         r = run([ffprobe(), "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1", "-show_frames",
                  "-show_entries", "frame=side_data_list", "-print_format", "json", str(out)])
         try:
@@ -440,10 +452,15 @@ def verify(out: Path, c: EncodeConfig, frames: int, want_audio: bool) -> dict:
                         rep["maxCll"], rep["maxFall"] = int(sd["max_content"]), int(sd["max_average"])
                     if "max_luminance" in sd:
                         rep["masterPeak"] = float(Fraction(sd["max_luminance"]))
+                    if "2094-40" in sd.get("side_data_type", ""):
+                        rep["hdr10plus"] = {"maxSclNits": round(float(Fraction(sd["maxscl"])) * 10000, 1),
+                                            "averageNits": round(float(Fraction(sd["average_maxrgb"])) * 10000, 1)}
         except Exception:
             pass
         if "maxCll" not in rep or "masterPeak" not in rep:
             problems.append("بيانات HDR10 الوصفية مفقودة")
+        if want_hdr10plus and "hdr10plus" not in rep:
+            problems.append("بيانات HDR10+ مفقودة")
     r = run([ffprobe(), "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(out)])
     pts = sorted(float(x) for x in r.stdout.decode().split() if x not in ("", "N/A"))
     if len(pts) == frames and frames > 1:
