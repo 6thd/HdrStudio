@@ -326,6 +326,11 @@ function renderReport(r) {
   ];
   if (r.maxCll != null) rows.push(["MaxCLL / MaxFALL (مقاس)", `${r.maxCll} / ${r.maxFall} nit`], ["شاشة المرجع (معلنة)", `P3-D65 · ${r.masterPeak} nit`]);
   rows.push(["الحجم", (r.bytes / 1048576).toFixed(1) + " MB"], ["الزمن", dur(r.seconds)]);
+  if (r.timing) {
+    const t = r.timing, names = { analysis: "تحليل", decode: "فك الترميز", cleanup: "التنظيف", ai: "AI", interpolation: "توليد الإطارات", encode: "الترميز" };
+    const parts = Object.keys(names).filter((k) => t[k] >= 0.05).map((k) => `${names[k]} ${t[k].toFixed(1)} ث`);
+    rows.push(["توزيع الزمن", parts.join(" · ")], ["الذاكرة القصوى", t.peakMemoryMB + " MB"]);
+  }
   const t = document.createElement("table");
   for (const [k, v, cls] of rows) {
     const tr = t.insertRow(); tr.insertCell().textContent = k;

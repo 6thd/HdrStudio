@@ -90,6 +90,9 @@ def test_hdr10_export_is_valid(clip, tmp_path):
     si = media.probe(str(tmp_path / "hdr.mp4"))
     assert si.is_hdr and si.bit_depth == 10 and si.max_cll == rep["maxCll"]
     assert not Path(str(tmp_path / "hdr.mp4") + ".hdrjob").exists()        # job directory removed on success
+    t = rep["timing"]                                                     # where the time went, for every export
+    assert t["framesThisRun"] == FRAMES and t["fps"] > 0 and t["peakMemoryMB"] > 0
+    assert t["decode"] > 0 and t["encode"] > 0 and t["ai"] == 0 and t["interpolation"] == 0
 
 
 def test_hlg_export_is_valid(clip, tmp_path):

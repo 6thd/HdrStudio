@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from . import ai, media, models, rife
-from . import hdr10plus
+from . import diag, hdr10plus
 from .glkit import GlKit
 from .pipeline import FramePipeline, Params
 
@@ -431,7 +431,11 @@ class ExportJob:
             self._set(stage="تجهيز نموذج توليد الإطارات")
             interp = _interpolator(eng, p.out_w, p.out_h, self.log)
             self.log(f"توليد الإطارات: RIFE v4.6 على {interp.backend['label']} — {interp.backend['frameS']} ث/إطار")
+        # where the time goes: seconds per stage for the frames processed in this run
+        tm = {"analysis": 0.0, "decode": 0.0, "cleanup": 0.0, "ai": 0.0, "interpolation": 0.0, "encode": 0.0}
+        t0 = time.perf_counter()
         dyn = self._scene_metadata(eng, si, pl, jd, key) if pl.hdr10plus else None
+        tm["analysis"] = time.perf_counter() - t0
         dec = media.Decoder(si, start=s.start, duration=s.duration or None)
         inp = _Input(k, si, dec, p.work_domain)
         pipe = FramePipeline(k, dec.w, dec.h, p, sr)
@@ -488,6 +492,13 @@ class ExportJob:
                 self.live_n += 1
                 ctx["live"] = time.perf_counter()
 
+        _emit = emit
+
+        def emit(tex):          # light measurement, 4:2:0 conversion, read-back and the encoder pipe
+            t = time.perf_counter()
+            _emit(tex)
+            tm["encode"] += time.perf_counter() - t
+
         idx, prev, fin = 0, None, None
         try:
             warm = min(3, src_done)
@@ -498,10 +509,16 @@ class ExportJob:
             self._set(stage="معالجة")
             while True:
                 self._check()
+                t = time.perf_counter()
                 planes = dec.read()
+                tm["decode"] += time.perf_counter() - t
                 if planes is None:
                     break
+                t = time.perf_counter()
                 fin = pipe.process(inp.load(planes), dt)
+                ai_s = pipe.info.get("aiMs", 0.0) / 1000.0
+                tm["ai"] += ai_s
+                tm["cleanup"] += max(0.0, time.perf_counter() - t - ai_s)
                 if idx < src_done:                  # warm-up of the temporal filter after a resume
                     idx += 1
                     if idx == src_done:
@@ -511,7 +528,9 @@ class ExportJob:
                     cur = k.read(fin, 3).copy()
                     if prev is not None:            # None: first frame, or its in-between is already in a finished chunk
                         self._check()
+                        t = time.perf_counter()
                         mid = prev if pipe.info.get("cut") else interp.middle(prev, cur)   # never blend across a scene cut
+                        tm["interpolation"] += time.perf_counter() - t
                         mid_tex.t.write(mid.tobytes(), alignment=1)
                         emit(mid_tex)
                     prev = cur
@@ -539,6 +558,7 @@ class ExportJob:
             raise RuntimeError("لم يُقرأ أي إطار من المصدر. " + err)
 
         self._set(stage="دمج المقاطع وكتابة بيانات HDR10", frame=total, total=total)
+        t_mux = time.perf_counter()
         cll, fall = media.safe_cll(round(st["maxCll"]), round(st["maxFall"]))
         tmp = jd / ("out" + (out.suffix or ".mp4"))
         media.mux([jd / c["file"] for c in st["chunks"]], enc_cfg, si, tmp, start=s.start, frames=total)
@@ -552,6 +572,10 @@ class ExportJob:
                 rep["problems"].append(f"MaxCLL/MaxFALL في الملف {rep.get('maxCll')}/{rep.get('maxFall')} ≠ المقاس {cll}/{fall}")
                 rep["ok"] = False
         rep["seconds"] = round(time.perf_counter() - t_start)
+        tm["muxVerify"] = time.perf_counter() - t_mux
+        rep["timing"] = {**{k_: round(v, 2) for k_, v in tm.items()}, "framesThisRun": ctx["new"],
+                         "fps": round(ctx["new"] / max(1e-6, sum(tm.values()) - tm["muxVerify"]), 3),
+                         "peakMemoryMB": diag.peak_memory_mb()}
         rep["output"] = str(out)
         self.report = rep
         if not rep["ok"]:
