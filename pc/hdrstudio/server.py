@@ -88,7 +88,7 @@ class App:
             est ={"secPerFrame": round(per, 2), "frames": pl.frames, "totalSec": round(per * pl.frames), "backend": b["label"], "tiles": tiles}
         return {"outW": pl.params.out_w, "outH": pl.params.out_h, "model": pl.model, "lrW": pl.lr_w, "lrH": pl.lr_h,
                 "notes": pl.notes, "frames": pl.frames, "estimate": est, "fps": round(float(pl.enc.fps), 3),
-                "codec": pl.enc.codec, "hdr": pl.enc.hdr, "crf": pl.enc.crf, "interp": pl.interp,
+                "codec": pl.enc.codec, "hdr": pl.enc.hdr, "trc": pl.enc.trc, "crf": pl.enc.crf, "interp": pl.interp, "hdr10plus": pl.hdr10plus,
                 "resumable": Path(s.output + ".hdrjob").joinpath("state.json").exists() if s.output else False}
 
     def preview(self, q):

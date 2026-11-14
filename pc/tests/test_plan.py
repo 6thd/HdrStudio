@@ -48,6 +48,18 @@ def test_frame_doubling_only_up_to_60():
     assert not p.interp and p.notes
 
 
+def test_hlg_preset_and_peak_limit():
+    p = plan(Settings(preset="tiktok_hlg", quality="off", peak=4000.0), src())
+    assert p.enc.hdr and p.enc.trc == "hlg" and p.enc.peak == p.params.peak == 1000.0 and p.notes
+
+
+def test_hdr10plus_only_with_pq_output():
+    assert plan(Settings(preset="tiktok_hdr", quality="off", hdr10plus=True), src()).hdr10plus
+    for preset in ("tiktok_hlg", "tiktok_sdr"):
+        p = plan(Settings(preset=preset, quality="off", hdr10plus=True), src())
+        assert not p.hdr10plus and any("HDR10+" in n for n in p.notes)
+
+
 def test_settings_ignore_unknown_keys():
     s = Settings.from_dict({"quality": "off", "no_such_key": 1})
     assert s.quality == "off"

@@ -23,6 +23,8 @@
 .venv\Scripts\python -m hdrstudio bench general x2plus x4plus
 ```
 
+`--preset`: ‏`tiktok_hdr` (HDR10) · `tiktok_hlg` (HLG) · `tiktok_sdr` · `hdr10_master` · `sdr_master`. ‏`--set hdr10plus=true` يضيف بيانات HDR10+ لكل مشهد.
+
 `--quality`: ‏`off` · `fast` · `detail` · `high` · `max`. ‏`--fps x2` يولّد إطارات بينية (30 ← 60). أي إعداد آخر عبر `--set`، مثل `--set sharpen=0.5`.
 
 ## بناء المثبِّت

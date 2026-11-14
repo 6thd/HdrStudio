@@ -61,6 +61,17 @@ vec3 hlgToNits(vec3 e, float Lw) {
     return Lw * pow(ys, gamma - 1.0) * s;
 }
 
+// Display nits (BT.2020) -> HLG signal for a nominal display of peak Lw: inverse OOTF, then OETF.
+vec3 nitsToHlg(vec3 nits, float Lw) {
+    vec3 d = clamp(nits / Lw, 0.0, 1.0);
+    float gamma = 1.2 + 0.42 * log(Lw / 1000.0) / log(10.0);
+    float yd = max(dot(LUMA2020, d), 1e-7);
+    vec3 s = clamp(d * pow(yd, (1.0 - gamma) / gamma), 0.0, 1.0);
+    vec3 lo = sqrt(3.0 * s);
+    vec3 hi = HLG_A * log(max(12.0 * s - HLG_B, 1e-6)) + HLG_C;
+    return mix(lo, hi, step(1.0 / 12.0, s));
+}
+
 // ---------------------------------------------------------------- SDR transfer
 // SDR code value -> linear relative light (1.0 = SDR peak/white).
 // gammaMode 0: BT.1886 display EOTF with zero black (pure power 2.4, ITU-R BT.2408 SDR->HDR mapping)
