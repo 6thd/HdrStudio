@@ -23,6 +23,8 @@ jobs:
         working-directory: pc
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # the job only reads: leave no token in the checkout for later steps
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
