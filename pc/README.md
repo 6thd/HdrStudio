@@ -25,7 +25,9 @@
 
 `--preset`: ‏`tiktok_hdr` (HDR10) · `tiktok_hlg` (HLG) · `tiktok_sdr` · `hdr10_master` · `sdr_master`. ‏`--set hdr10plus=true` يضيف بيانات HDR10+ لكل مشهد.
 
-`--quality`: ‏`off` · `fast` · `detail` · `high` · `max`. ‏`--fps x2` يولّد إطارات بينية (30 ← 60). أي إعداد آخر عبر `--set`، مثل `--set sharpen=0.5`.
+`--quality`: ‏`off` · `fast` · `detail` · `high` · `max`.
+
+**تشخيص الأداء:** `hdrstudio-cli diag --size 1080 -o report.json` يصف الجهاز (المعالج، البطاقات، OpenGL، خلفيات AI) ويشغّل تصديرات قصيرة موقوتة، ويفصل زمن كل مرحلة: فك الترميز، التنظيف، AI، توليد الإطارات، الترميز. أرفق ناتجه مع أي بلاغ عن بطء أو خطأ. ‏`--fps x2` يولّد إطارات بينية (30 ← 60). أي إعداد آخر عبر `--set`، مثل `--set sharpen=0.5`.
 
 ## بناء المثبِّت
 

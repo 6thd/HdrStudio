@@ -42,6 +42,11 @@ def main(argv=None):
     e.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="any other setting, e.g. --set sharpen=0.5")
     p = sub.add_parser("probe")
     p.add_argument("input")
+    dg = sub.add_parser("diag", help="environment report and timed test exports (send the output with a bug report)")
+    dg.add_argument("--size", type=int, default=1080, help="short side of the test clip (1080, 2160, ...)")
+    dg.add_argument("--seconds", type=float, default=2.0)
+    dg.add_argument("--ai", default="fast", choices=["off", "fast", "detail", "high", "max"])
+    dg.add_argument("-o", "--output", default="", help="also write the report as JSON")
     b = sub.add_parser("bench")
     b.add_argument("models", nargs="*", default=["general"])
     a = ap.parse_args(argv)
@@ -49,6 +54,9 @@ def main(argv=None):
     if a.cmd in (None, "gui"):
         from .server import serve
         return serve(browser=getattr(a, "browser", False), port=getattr(a, "port", 0), open_ui=not getattr(a, "no_open", False))
+    if a.cmd == "diag":
+        from . import diag
+        return diag.run(a.size, a.seconds, a.ai, a.output)
     if a.cmd == "probe":
         from . import media
         print(json.dumps(media.probe(a.input).describe(), ensure_ascii=False, indent=1))
