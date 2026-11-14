@@ -19,6 +19,10 @@ def main(argv=None):
             s.reconfigure(encoding="utf-8")
         except Exception:
             pass
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args[:1] == ["_pick"]:                     # internal: file dialog child process
+        from .dialogs import child_main
+        return child_main(args[1:4])
     ap = argparse.ArgumentParser(prog="hdrstudio", description="HDR Studio — AI video enhancement and HDR10 export")
     sub = ap.add_subparsers(dest="cmd")
     g = sub.add_parser("gui", help="desktop app (default)")

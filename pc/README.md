@@ -1,12 +1,12 @@
 # HDR Studio للحاسوب
 
-تحسين الفيديو بالذكاء الاصطناعي وإخراج HDR10 على Windows. نسخة الحاسوب من [تطبيق الهاتف](https://github.com/6thd/HdrStudio): نفس مسار الألوان والتنظيف، مع نماذج AI أثقل وأولوية للجودة.
+تحسين الفيديو بالذكاء الاصطناعي وإخراج HDR10 على Windows. نسخة الحاسوب من [تطبيق الهاتف](../docs/ANDROID.md): نفس مسار الألوان والتنظيف، مع نماذج AI أثقل وأولوية للجودة.
 
-## التشغيل
+## التثبيت
 
-انقر مرتين على **`HDR Studio.bat`**. أول مرة يثبّت المكتبات، ثم يفتح نافذة التطبيق.
+**المثبِّت (الأسهل):** نزّل `HDRStudio-Setup-x.y.z.exe` من [Releases](https://github.com/6thd/HdrStudio/releases). لا يحتاج Python ولا صلاحيات مدير، ويعرض تثبيت FFmpeg إن لم يكن موجوداً. يثبَّت في `%LOCALAPPDATA%\Programs\HDR Studio` ومعه `hdrstudio-cli.exe` لسطر الأوامر.
 
-المتطلبات: Windows 10/11، ‏Python 3.12 أو أحدث (مختبَر في CI على 3.12 و3.13 و3.14)، ‏FFmpeg (`winget install Gyan.FFmpeg`).
+**من المصدر:** انقر مرتين على **`HDR Studio.bat`**. أول مرة يثبّت المكتبات، ثم يفتح نافذة التطبيق. المتطلبات: Windows 10/11، ‏Python 3.12 أو أحدث (مختبَر في CI على 3.12 و3.13 و3.14)، ‏FFmpeg (`winget install Gyan.FFmpeg`).
 
 ## الاستخدام
 
@@ -24,6 +24,18 @@
 ```
 
 `--quality`: ‏`off` · `fast` · `detail` · `high` · `max`. ‏`--fps x2` يولّد إطارات بينية (30 ← 60). أي إعداد آخر عبر `--set`، مثل `--set sharpen=0.5`.
+
+## بناء المثبِّت
+
+```
+.venv\Scripts\python -m pip install -r requirements-build.txt
+.venv\Scripts\python -m PyInstaller packaging/hdrstudio.spec --noconfirm
+ISCC /DAppVer=1.0.0 packaging\installer.iss
+```
+
+الخطوة الثانية تنتج المجلد `dist\HDR Studio` (يعمل مباشرة دون تثبيت)، والثالثة تحتاج [Inno Setup 6](https://jrsoftware.org/isinfo.php) وتنتج `dist\HDRStudio-Setup-1.0.0.exe`. سير العمل `pc-release.yml` يبني المثبِّت تلقائياً، وينشره كـRelease عند دفع وسم بالصيغة `pc-v1.0.0`.
+
+FFmpeg لا يُضمَّن في المثبِّت (حجمه نحو 450MB وترخيصه GPL)؛ يُثبَّت عبر winget أو يوضع `ffmpeg.exe` و`ffprobe.exe` في `_internal\bin`.
 
 ## الاختبارات
 

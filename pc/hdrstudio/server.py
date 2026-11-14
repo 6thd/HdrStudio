@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import ai, media, models
+from . import ai, dialogs, media, models
 from .job import PRESETS, QUALITY, Engine, ExportJob, Settings, estimate, plan, preview
 
 UI = Path(__file__).parent / "ui"
@@ -57,19 +57,8 @@ class App:
         return info
 
     def pick(self, q):
-        """Native file dialog, run in a child process so Tk owns its own main thread."""
-        kind, initial = q.get("kind", "open"), q.get("initial", "")
-        code = (
-            "import sys,tkinter as tk\nfrom tkinter import filedialog as fd\n"
-            "r=tk.Tk();r.withdraw();r.attributes('-topmost',True)\n"
-            "k,ini=sys.argv[1],sys.argv[2]\n"
-            "ft=[('Video','*.mp4 *.mov *.mkv *.m4v *.webm *.avi *.ts *.mts'),('All','*.*')]\n"
-            "import os\n"
-            "p=fd.askopenfilename(filetypes=ft) if k=='open' else fd.asksaveasfilename(defaultextension='.mp4',"
-            "filetypes=[('MP4','*.mp4')],initialfile=os.path.basename(ini),initialdir=os.path.dirname(ini) or None)\n"
-            "sys.stdout.buffer.write((p or '').encode('utf-8'))\n")
-        r = subprocess.run([sys.executable, "-c", code, kind, initial], capture_output=True, creationflags=media.NO_WINDOW)
-        return {"path": r.stdout.decode("utf-8").strip().replace("/", os.sep)}
+        """Native file dialog (a child process: see dialogs.py)."""
+        return {"path": dialogs.pick(q.get("kind", "open"), str(q.get("initial", "")))}
 
     def probe(self, q):
         si = media.probe(q["path"])

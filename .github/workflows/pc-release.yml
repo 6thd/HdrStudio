@@ -1,0 +1,71 @@
+name: PC app installer
+
+# Builds the Windows installer (PyInstaller folder + Inno Setup).
+#   - pull requests that touch the packaging: build and keep the installer as an artifact
+#   - a tag "pc-v1.2.3": build and publish it as a GitHub release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp on the installer (e.g. 1.0.0)"
+        default: "0.0.0"
+  pull_request:
+    paths: ["pc/packaging/**", "pc/requirements*.txt", ".github/workflows/pc-release.yml"]
+  push:
+    tags: ["pc-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    permissions:
+      contents: write       # only used to publish the release on a tag
+    defaults:
+      run:
+        working-directory: pc
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pc/requirements*.txt
+      - name: Version
+        run: |
+          $v = "${{ inputs.version }}"
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}" -replace "^pc-v", "" }
+          if (-not $v) { $v = "0.0.0" }
+          "HDR_VERSION=$v" >> $env:GITHUB_ENV
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt -r requirements-build.txt
+      - run: python -m pytest tests -q
+      - name: Build the app folder
+        run: python -m PyInstaller packaging/hdrstudio.spec --noconfirm
+      - name: Smoke test the packaged program
+        run: |
+          & "dist/HDR Studio/hdrstudio-cli.exe" --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # converts the bundled weights to ONNX and checks every runtime against the CPU reference
+          & "dist/HDR Studio/hdrstudio-cli.exe" bench general
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Remove-Item "dist/HDR Studio/_internal/models/*.onnx" -ErrorAction SilentlyContinue
+      - name: Build the installer
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVer=$env:HDR_VERSION" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem dist\*.exe | ForEach-Object { "{0}  {1:N0} MB" -f $_.Name, ($_.Length / 1MB) }
+          (Get-FileHash "dist\HDRStudio-Setup-$env:HDR_VERSION.exe" -Algorithm SHA256).Hash | Out-File "dist\HDRStudio-Setup-$env:HDR_VERSION.exe.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HDRStudio-Setup-${{ env.HDR_VERSION }}
+          path: |
+            pc/dist/HDRStudio-Setup-*.exe
+            pc/dist/HDRStudio-Setup-*.sha256
+          retention-days: 14
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" (Get-ChildItem dist\HDRStudio-Setup-*).FullName --title "HDR Studio for Windows $env:HDR_VERSION" --generate-notes
