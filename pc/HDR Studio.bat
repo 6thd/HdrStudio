@@ -8,5 +8,5 @@ if not exist .venv\Scripts\pythonw.exe (
 start "" .venv\Scripts\pythonw.exe -m hdrstudio
 exit /b 0
 :err
-echo Setup failed. Python 3.11+ is required.
+echo Setup failed. Python 3.12 or newer is required.
 pause

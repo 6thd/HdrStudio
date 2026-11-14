@@ -1,6 +1,14 @@
 from fractions import Fraction
 
+import pytest
+
 from hdrstudio import media
+
+
+@pytest.fixture(autouse=True)
+def no_ffmpeg_needed(monkeypatch):
+    """These tests only inspect arguments; they must pass on a machine without FFmpeg."""
+    monkeypatch.setitem(media._exe, "ffmpeg", "ffmpeg")
 
 
 def test_cll_values_never_need_emulation_prevention():

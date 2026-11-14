@@ -38,12 +38,18 @@ def _find(name: str) -> str:
 _exe: dict[str, str] = {}
 
 
+def _cached(name: str) -> str:
+    if name not in _exe:            # looked up once: setdefault() would search the disk on every call
+        _exe[name] = _find(name)
+    return _exe[name]
+
+
 def ffmpeg() -> str:
-    return _exe.setdefault("ffmpeg", _find("ffmpeg"))
+    return _cached("ffmpeg")
 
 
 def ffprobe() -> str:
-    return _exe.setdefault("ffprobe", _find("ffprobe"))
+    return _cached("ffprobe")
 
 
 def run(args, **kw):
