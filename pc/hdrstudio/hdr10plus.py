@@ -46,34 +46,74 @@ class FrameStats:
         self.pixels = int(m.size)
 
 
+class SceneStats:
+    """Running totals of one scene. Constant size however long the scene is."""
+
+    def __init__(self):
+        self.hist = np.zeros(BINS, np.int64)
+        self.max_rgb = np.zeros(3)
+        self.sum_nits, self.pixels = 0.0, 0
+
+    def add(self, f: FrameStats):
+        self.hist += f.hist
+        self.max_rgb = np.maximum(self.max_rgb, f.max_rgb)
+        self.sum_nits += f.sum_nits
+        self.pixels += f.pixels
+
+    def entry(self) -> dict:
+        cdf = np.cumsum(self.hist) / max(1, self.hist.sum())
+        unit = lambda nits: int(min(100000, max(0, round(float(nits) * 10))))
+        values = [unit(_BIN_NITS[min(BINS - 1, int(np.searchsorted(cdf, p / 100.0)))]) for p in PERCENTILES]
+        return {"LuminanceParameters": {
+            "AverageRGB": unit(self.sum_nits / max(1, self.pixels)),
+            "LuminanceDistributions": {"DistributionIndex": PERCENTILES, "DistributionValues": values},
+            "MaxScl": [unit(v) for v in self.max_rgb]},
+            "NumberOfWindows": 1, "TargetedSystemDisplayMaximumLuminance": 0}
+
+
 def scene_entry(frames: list) -> dict:
     """One scene's metadata from the statistics of its frames."""
-    hist = np.sum([f.hist for f in frames], axis=0)
-    cdf = np.cumsum(hist) / max(1, hist.sum())
-    unit = lambda nits: int(min(100000, max(0, round(float(nits) * 10))))
-    values = [unit(_BIN_NITS[min(BINS - 1, int(np.searchsorted(cdf, p / 100.0)))]) for p in PERCENTILES]
-    max_scl = np.max([f.max_rgb for f in frames], axis=0)
-    avg = sum(f.sum_nits for f in frames) / max(1, sum(f.pixels for f in frames))
-    return {"LuminanceParameters": {
-        "AverageRGB": unit(avg),
-        "LuminanceDistributions": {"DistributionIndex": PERCENTILES, "DistributionValues": values},
-        "MaxScl": [unit(v) for v in max_scl]},
-        "NumberOfWindows": 1, "TargetedSystemDisplayMaximumLuminance": 0}
+    s = SceneStats()
+    for f in frames:
+        s.add(f)
+    return s.entry()
+
+
+class Accumulator:
+    """Folds frames into scenes as they arrive. Memory is one histogram for the open scene, one
+    finished entry per scene and one small integer per frame: an hour of video stays in the
+    low megabytes instead of keeping a histogram (8 KiB) for each of its ~100000 frames."""
+
+    def __init__(self):
+        self.scenes, self.frame_scene, self.cur = [], [], None
+
+    @property
+    def frames(self) -> int:
+        return len(self.frame_scene)
+
+    def add(self, f: FrameStats, cut: bool):
+        if self.cur is None or (cut and self.frame_scene):
+            self._close()
+            self.cur = SceneStats()
+        self.cur.add(f)
+        self.frame_scene.append(len(self.scenes))
+
+    def _close(self):
+        if self.cur is not None:
+            self.scenes.append(self.cur.entry())
+            self.cur = None
+
+    def finish(self) -> dict:
+        self._close()
+        return {"scenes": self.scenes, "frameScene": self.frame_scene}
 
 
 def build(stats: list, cuts: list) -> dict:
     """stats: FrameStats per source frame. cuts: True where a frame starts a new scene."""
-    scenes, start = [], 0
-    for i in range(1, len(stats) + 1):
-        if i == len(stats) or cuts[i]:
-            scenes.append((start, i))
-            start = i
-    frame_scene = [0] * len(stats)
-    entries = []
-    for n, (a, b) in enumerate(scenes):
-        entries.append(scene_entry(stats[a:b]))
-        frame_scene[a:b] = [n] * (b - a)
-    return {"scenes": entries, "frameScene": frame_scene}
+    acc = Accumulator()
+    for f, c in zip(stats, cuts):
+        acc.add(f, c)
+    return acc.finish()
 
 
 def chunk_json(meta: dict, source_frames: list, path: Path, version: str = "1.0"):

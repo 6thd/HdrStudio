@@ -156,8 +156,9 @@ def plan(s: Settings, si: media.SourceInfo) -> Plan:
     dur = si.duration - s.start
     if s.duration > 0:
         dur = min(dur, s.duration)
-    frames = max(1, int(round(dur * float(fps)))) if (s.start > 0 or s.duration > 0) else si.frames
-    return Plan(p, enc, model, lr_w, lr_h, notes, frames * 2 if interp else frames, interp, float(si.fps), hdr10plus=dyn)
+    # source frames first; interpolation writes exactly two frames for each of them
+    src_frames = max(1, int(round(dur * float(si.fps)))) if (s.start > 0 or s.duration > 0) else si.frames
+    return Plan(p, enc, model, lr_w, lr_h, notes, src_frames * 2 if interp else src_frames, interp, float(si.fps), hdr10plus=dyn)
 
 
 def pick_backend(bench: dict, allow_fp16: bool) -> dict:
@@ -395,7 +396,7 @@ class ExportJob:
         self._set(state="running", stage="فحص المصدر")
         si = media.probe(s.input)
         pl = plan(s, si)
-        out = Path(s.output)
+        out = Path(s.output).resolve()      # the encoder runs in the job folder: relative paths would break
         out.parent.mkdir(parents=True, exist_ok=True)
         jd = Path(str(out) + ".hdrjob")
         jd.mkdir(exist_ok=True)
@@ -580,7 +581,7 @@ class ExportJob:
         dec = media.Decoder(si, start=s.start, duration=s.duration or None)
         inp = _Input(k, si, dec, ap.work_domain)
         pipe = FramePipeline(k, dec.w, dec.h, ap, None)
-        stats, cuts, total = [], [], max(1, pl.frames // (2 if pl.interp else 1))
+        acc, total = hdr10plus.Accumulator(), max(1, pl.frames // (2 if pl.interp else 1))
         try:
             while True:
                 self._check()
@@ -588,19 +589,18 @@ class ExportJob:
                 if planes is None:
                     break
                 fin = pipe.process(inp.load(planes), 1.0 / pl.src_fps)
-                stats.append(hdr10plus.FrameStats(k.read(fin)[..., :3]))
-                cuts.append(bool(pipe.info.get("cut")) and len(stats) > 1)
-                if len(stats) % 10 == 0:
-                    self._set(stage=f"تحليل المشاهد لبيانات HDR10+ ({len(stats)}/{total})")
+                acc.add(hdr10plus.FrameStats(k.read(fin)[..., :3]), bool(pipe.info.get("cut")))
+                if acc.frames % 10 == 0:
+                    self._set(stage=f"تحليل المشاهد لبيانات HDR10+ ({acc.frames}/{total})")
         finally:
             dec.close()
             pipe.release()
             inp.release()
-        if not stats:
+        if not acc.frames:
             raise RuntimeError("تعذّر تحليل المصدر لبيانات HDR10+")
-        meta = hdr10plus.build(stats, cuts)
+        meta = acc.finish()
         cache.write_text(json.dumps({"key": key, "meta": meta}), "utf-8")
-        self.log(f"HDR10+: {len(meta['scenes'])} مشهد من {len(stats)} إطاراً")
+        self.log(f"HDR10+: {len(meta['scenes'])} مشهد من {acc.frames} إطاراً")
         return meta
 
     def _close_chunk(self, enc, st, pipe, state_f):

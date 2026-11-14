@@ -317,6 +317,7 @@ def encoder_args(c: EncodeConfig, out: str, dhdr10: str = "") -> list:
 
 class Encoder:
     def __init__(self, c: EncodeConfig, out: Path, log: Path, dhdr10: str = ""):
+        out = Path(out).resolve()
         self.out, self._log = out, open(log, "ab")
         # the metadata file is named relative to cwd: an absolute Windows path has a ':' that x265-params cannot carry
         self.proc = subprocess.Popen(encoder_args(c, str(out), dhdr10), stdin=subprocess.PIPE, stderr=self._log, stdout=self._log,

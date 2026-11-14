@@ -2,6 +2,7 @@
 and resuming after the process is killed. Needs FFmpeg and an OpenGL 3.3 context, so it is
 skipped on machines without them (hosted CI runners have no GPU)."""
 import json
+import os
 import subprocess
 import sys
 import time
@@ -113,6 +114,17 @@ def test_hdr10plus_on_every_frame_and_per_scene(clip, tmp_path):
     assert len(keys) == FRAMES
     changes = [i for i in range(1, FRAMES) if keys[i] != keys[i - 1]]
     assert changes == [FRAMES // 2], "metadata must change at the scene cut and nowhere else"
+
+
+def test_relative_output_path(clip, tmp_path):
+    """`-o exports/out.mp4` from another working directory, with and without HDR10+ metadata."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    for name, extra in (("plain.mp4", []), ("dyn.mp4", ["--set", "hdr10plus=true"])):
+        r = subprocess.run([sys.executable, "-m", "hdrstudio", "export", str(clip), "-o", f"exports/{name}", "--quality", "off",
+                            "--duration", "1", *extra], cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=600)
+        assert (tmp_path / "exports" / name).exists(), r.stdout[-800:]
+        assert '"ok": true' in r.stdout
+    assert not (tmp_path / "exports" / "exports").exists()
 
 
 def test_sdr_export_is_valid(clip, tmp_path):

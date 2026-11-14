@@ -61,6 +61,32 @@ def test_chunk_file_structure(tmp_path):
     assert "BezierCurveData" not in info[0] and info[0]["NumberOfWindows"] == 1
 
 
+def test_statistics_are_kept_per_scene_not_per_frame():
+    """An hour of video is ~100000 frames: the analysis must not keep a histogram for each."""
+    import tracemalloc
+    acc = hp.Accumulator()
+    one = frame([120, 80, 40], n=64)
+    for i in range(50):                                # warm up allocator and caches
+        acc.add(hp.FrameStats(one), cut=False)
+    tracemalloc.start()
+    before = tracemalloc.get_traced_memory()[0]
+    for i in range(4000):
+        acc.add(hp.FrameStats(one), cut=(i == 2000))
+    grown = tracemalloc.get_traced_memory()[0] - before
+    tracemalloc.stop()
+    meta = acc.finish()
+    assert len(meta["scenes"]) == 2 and len(meta["frameScene"]) == 4050
+    assert grown < 400_000, f"{grown} bytes for 4000 frames (8 KiB per frame would be 32 MB)"
+
+
+def test_accumulator_matches_scene_entry():
+    a, b = hp.FrameStats(frame([50, 100, 20])), hp.FrameStats(frame([300, 100, 800]))
+    acc = hp.Accumulator()
+    acc.add(a, False)
+    acc.add(b, False)
+    assert acc.finish()["scenes"][0] == hp.scene_entry([a, b])
+
+
 def test_analysis_size():
     assert hp.analysis_size(3840, 2160) == (960, 540)
     assert hp.analysis_size(1080, 1920) == (540, 960)

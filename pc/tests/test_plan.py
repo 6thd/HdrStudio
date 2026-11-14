@@ -48,6 +48,16 @@ def test_frame_doubling_only_up_to_60():
     assert not p.interp and p.notes
 
 
+@pytest.mark.skipif(not rife.available(), reason="RIFE weights not present")
+def test_frame_count_with_doubling():
+    whole = plan(Settings(quality="off", fps_mode="x2"), src())                      # 270 source frames
+    assert whole.frames == 540 and float(whole.enc.fps) == 60
+    cut = plan(Settings(quality="off", fps_mode="x2", start=1.0, duration=3.0), src())
+    assert cut.frames == 180, "3 s of a 30 fps source doubled to 60 fps is 180 frames"
+    assert cut.frames / float(cut.enc.fps) == pytest.approx(3.0)
+    assert plan(Settings(quality="off", start=1.0, duration=3.0), src()).frames == 90
+
+
 def test_hlg_preset_and_peak_limit():
     p = plan(Settings(preset="tiktok_hlg", quality="off", peak=4000.0), src())
     assert p.enc.hdr and p.enc.trc == "hlg" and p.enc.peak == p.params.peak == 1000.0 and p.notes

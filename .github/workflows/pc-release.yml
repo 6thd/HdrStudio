@@ -19,9 +19,8 @@ permissions:
 
 jobs:
   installer:
+    # Runs repository code (tests, the build): read-only token, also for pull requests.
     runs-on: windows-latest
-    permissions:
-      contents: write       # only used to publish the release on a tag
     defaults:
       run:
         working-directory: pc
@@ -64,8 +63,33 @@ jobs:
             pc/dist/HDRStudio-Setup-*.exe
             pc/dist/HDRStudio-Setup-*.sha256
           retention-days: 14
+
+  publish:
+    # The only job with a write token. It runs for tags only, never for pull requests, and it
+    # executes no code from the repository: it downloads the built installer and attaches it.
+    if: github.ref_type == 'tag'
+    needs: installer
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Check the installer against its recorded hash
+        run: |
+          cd dist
+          ls -la
+          f=$(ls HDRStudio-Setup-*.exe)
+          want=$(tr -d '\r\n ' < "$f.sha256" | tr 'A-F' 'a-f')
+          got=$(sha256sum "$f" | cut -d' ' -f1)
+          echo "recorded $want"; echo "computed $got"
+          test "$want" = "$got"
       - name: Publish the release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" (Get-ChildItem dist\HDRStudio-Setup-*).FullName --title "HDR Studio for Windows $env:HDR_VERSION" --generate-notes
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#pc-v}"
+          gh release create "$TAG" dist/HDRStudio-Setup-* --repo "$GITHUB_REPOSITORY" --title "HDR Studio for Windows $version" --generate-notes

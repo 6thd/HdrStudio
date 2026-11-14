@@ -138,7 +138,9 @@ function reflect() {
   $("lookHint").textContent = look ? look.note : "إعدادات مخصّصة.";
   $("presetHint").textContent = S.sys.presets[S.set.preset].note;
   const hdrOut = S.sys.presets[S.set.preset].hdr, srcHdr = S.src && S.src.isHdr;
-  $("hdrSec").classList.toggle("dis", !hdrOut || !!srcHdr);
+  $("hdrSec").classList.toggle("dis", !hdrOut);
+  $("hdrExpand").classList.toggle("dis", !!srcHdr);          // an HDR source keeps its own light levels
+  $("prevNote").classList.toggle("hidden", !hdrOut);
   const q = S.sys.quality[S.set.quality], hint = $("tierHint");
   hint.textContent = "";
   if (q.model) {
