@@ -6,7 +6,7 @@
 
 انقر مرتين على **`HDR Studio.bat`**. أول مرة يثبّت المكتبات، ثم يفتح نافذة التطبيق.
 
-المتطلبات: Windows 10/11، ‏Python 3.11+، ‏FFmpeg (`winget install Gyan.FFmpeg`).
+المتطلبات: Windows 10/11، ‏Python 3.12 أو أحدث (مختبَر في CI على 3.12 و3.13 و3.14)، ‏FFmpeg (`winget install Gyan.FFmpeg`).
 
 ## الاستخدام
 
@@ -32,7 +32,7 @@
 .venv\Scripts\python -m pytest tests -q
 ```
 
-تعمل على CPU فقط: حماية واجهة API المحلية، التخطيط، وسائط المرمّز، ترقيع HDR10 SEI، وتحويل النماذج إلى ONNX. مسار GPU والتصدير الكامل يُختبران يدوياً (`tools/test_resume.py`).
+تعمل على CPU فقط: حماية واجهة API المحلية، التخطيط، وسائط المرمّز، ترقيع HDR10 SEI، وتحويل النماذج إلى ONNX. `tests/test_export.py` يشغّل التصدير الحقيقي (HDR10، ‏SDR، مضاعفة الإطارات، والاستئناف بعد قتل العملية) ويحتاج GPU وFFmpeg، فيعمل محلياً ويُتخطّى في CI.
 
 ## النماذج
 
