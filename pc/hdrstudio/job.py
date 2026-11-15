@@ -288,9 +288,15 @@ def preview(eng: Engine, s: Settings, t: float, cx: float, cy: float, size: int 
     t0 = time.perf_counter()
     sr = eng.model(pl.model, s.allow_fp16)
     ow, oh = _even(cw * f), _even(ch * f)
-    after_p = Params.from_dict({**pl.params.to_dict(), "out_w": ow, "out_h": oh, "out_mode": 1, "temporal": False})
-    before_p = Params(work_domain=after_p.work_domain, out_mode=1, deband=False, denoise_luma=0, denoise_chroma=0, temporal=False,
-                      ai=False, sharpen=0, vibrance=0, sdr_gamma=after_p.sdr_gamma, src_peak=after_p.src_peak, out_w=ow, out_h=oh)
+    # The picture is rendered in the output's own mode. An HDR result is tone-mapped for the (SDR) page,
+    # and so is "before": the source at reference white with no highlight expansion, so both halves share
+    # one viewing curve and the difference between them is the processing, not the tone mapping.
+    hdr = pl.enc.hdr
+    after_p = Params.from_dict({**pl.params.to_dict(), "out_w": ow, "out_h": oh, "temporal": False})
+    before_p = Params(work_domain=after_p.work_domain, out_mode=after_p.out_mode, deband=False, denoise_luma=0, denoise_chroma=0,
+                      temporal=False, ai=False, sharpen=0, vibrance=0, expand=0, sdr_gamma=after_p.sdr_gamma,
+                      ref_white=after_p.ref_white, peak=after_p.peak, knee=after_p.knee, src_peak=after_p.src_peak,
+                      sdr_peak_nits=after_p.sdr_peak_nits, out_w=ow, out_h=oh)
     inp = _Input(k, si, dec, after_p.work_domain)
     src = inp.load(planes)
     out = {}
@@ -298,7 +304,7 @@ def preview(eng: Engine, s: Settings, t: float, cx: float, cy: float, size: int 
     for name, p in (("before", before_p), ("after", after_p)):
         fp = FramePipeline(k, cw, ch, p, sr)
         res = k.read(fp.process(src, 1 / 30))[..., :3]
-        out[name] = _jpeg(to_display(res, False), "PNG")
+        out[name] = _jpeg(to_display(res, hdr), "PNG")
         if name == "after":
             out["info"] = {k_: (round(v, 5) if isinstance(v, float) else v) for k_, v in fp.info.items()}
         fp.release()
@@ -307,6 +313,7 @@ def preview(eng: Engine, s: Settings, t: float, cx: float, cy: float, size: int 
     out["loadMs"] = round((t1 - t0) * 1000)
     out["crop"] = [x, y, cw, ch]
     out["size"] = [ow, oh]
+    out["hdr"] = hdr
     out["estimate"] = estimate(pl, sr)
     out["notes"] = pl.notes
     return out

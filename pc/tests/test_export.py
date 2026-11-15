@@ -136,6 +136,32 @@ def test_sdr_export_is_valid(clip, tmp_path):
     assert rep["frames"] == FRAMES and rep["transfer"] == "bt709" and rep["primaries"] == "bt709"
 
 
+def test_preview_shows_the_output_mode(clip):
+    """An HDR preset previews the HDR result (tone-mapped for the page) against the unexpanded source on
+    the same viewing curve: highlights rise, and with every control at zero the two halves are identical."""
+    import io
+
+    from PIL import Image
+
+    from hdrstudio.job import Engine, Settings, preview
+    eng = Engine(log=lambda *a: None)
+
+    def run(preset, expand):
+        s = Settings(input=str(clip), preset=preset, quality="off", expand=expand, vibrance=0, sharpen=0,
+                     denoise_luma=0, denoise_chroma=0, deband=False)
+        r = eng.submit(lambda e: preview(e, s, 0.5, 0.5, 0.5, 320)).result()
+        return r, *(np.asarray(Image.open(io.BytesIO(r[k]))).astype(np.int16) for k in ("before", "after"))
+
+    r, before, after = run("tiktok_hdr", 0.0)
+    assert r["hdr"] and np.abs(after - before).max() <= 1
+    r, before, after = run("tiktok_hdr", 1.0)
+    assert r["info"]["expand"] > 0
+    assert after.max() > before.max() + 8, "expanded highlights must be visibly brighter than the source"
+    assert np.all(after.max(2) >= before.max(2) - 1), "expansion never darkens a pixel"
+    r, before, after = run("tiktok_sdr", 1.0)
+    assert not r["hdr"] and np.abs(after - before).max() <= 1
+
+
 @pytest.mark.skipif(not rife.available(), reason="RIFE weights not present")
 def test_frame_doubling_keeps_duration(clip, tmp_path):
     rep = _export(clip, tmp_path / "x2.mp4", "--preset", "tiktok_hdr", "--fps", "x2", "--duration", "2")

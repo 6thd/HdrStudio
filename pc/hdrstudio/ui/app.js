@@ -141,6 +141,7 @@ function reflect() {
   $("hdrSec").classList.toggle("dis", !hdrOut);
   $("hdrExpand").classList.toggle("dis", !!srcHdr);          // an HDR source keeps its own light levels
   $("prevNote").classList.toggle("hidden", !hdrOut);
+  $("prevMode").textContent = hdrOut ? " · HDR مضغوط النطاق للعرض" : "";
   const q = S.sys.quality[S.set.quality], hint = $("tierHint");
   hint.textContent = "";
   if (q.model) {

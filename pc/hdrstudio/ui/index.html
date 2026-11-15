@@ -40,7 +40,7 @@
           <input type="range" id="tSlider" min="0" max="1" step="0.001" value="0" dir="ltr">
         </div>
         <div class="pane">
-          <div class="pane-h"><span><b>قبل / بعد</b> بدقة الإخراج · معاينة SDR</span>
+          <div class="pane-h"><span><b>قبل / بعد</b> بدقة الإخراج<span id="prevMode"></span></span>
             <span><span class="stale hidden" id="stale">الإعدادات تغيّرت</span><button class="btn small" id="previewBtn">معاينة</button></span></div>
           <div class="compare" id="compare" dir="ltr">
             <div class="cmp-empty" id="cmpEmpty">اضغط «معاينة» لمعالجة المنطقة المختارة بالإعدادات الحالية</div>
@@ -49,7 +49,7 @@
             <span class="tag l">قبل</span><span class="tag r">بعد</span>
             <div class="spin hidden" id="cmpSpin"><div class="ring"></div><span id="cmpSpinText">معالجة…</span></div>
           </div>
-          <div class="pane-note hidden" id="prevNote">المعاينة بصيغة SDR: تُظهر التفاصيل والتنظيف والحدة. إضاءات HDR وألوانه النهائية لا تظهر هنا؛ احكم عليها من الملف المصدَّر على شاشة HDR.</div>
+          <div class="pane-note hidden" id="prevNote">معاينة HDR مضغوطة النطاق لشاشة SDR: «بعد» هو ناتج HDR نفسه و«قبل» هو المصدر بلا توسيع، وكلاهما بمنحنى العرض ذاته، فيظهر أين تُرفع الإضاءات وكم. السطوع الحقيقي والألوان النهائية تُحكَم من الملف المصدَّر على شاشة HDR.</div>
           <div class="pane-f mono" id="prevInfo"></div>
         </div>
       </div>
