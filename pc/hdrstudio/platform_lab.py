@@ -143,12 +143,34 @@ def decoded_signals(path, ffprobe="ffprobe"):
             "independent_bitstream_validation": "NOT_VERIFIED"}
 
 
+def trace_headers(path, ffmpeg="ffmpeg"):
+    """Inspect coded headers via FFmpeg trace_headers, without rewriting input."""
+    cmd = [ffmpeg, "-nostdin", "-v", "info", "-i", str(Path(path).resolve()),
+           "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "trace_headers",
+           "-frames:v", "1", "-f", "null", "-"]
+    keys = ("colour_primaries", "transfer_characteristics", "matrix_coefficients",
+            "bit_depth_luma_minus8", "bit_depth_chroma_minus8")
+    observed = []
+    with tempfile.TemporaryFile() as log:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=log, check=True, timeout=60)
+        log.seek(0)
+        for line in log:
+            if b"trace_headers" in line and any(key.encode() in line for key in keys):
+                if len(observed) >= 256:
+                    raise ValueError("header trace exceeds limit")
+                observed.append(line.decode("utf-8", errors="replace").strip())
+    return {"header_lines": observed, "scope": "initial coded headers and first packet",
+            "status": "OBSERVED" if observed else "NOT_VERIFIED",
+            "full_stream_hdr_validation": "NOT_VERIFIED"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("--compare")
     parser.add_argument("--decode-check", action="store_true")
     parser.add_argument("--frame-signals", action="store_true")
+    parser.add_argument("--trace-headers", action="store_true")
     parser.add_argument("--remux", help="standard lossless MP4 copy")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
@@ -156,6 +178,8 @@ def main(argv=None):
     report = {"boxes": inspect_boxes(args.input),
               "probe": probe(args.input, args.ffprobe)}
     report["hdr_signaling"] = hdr_signaling(report["probe"])
+    if args.trace_headers:
+        report["coded_headers"] = trace_headers(args.input, args.ffmpeg)
     if args.frame_signals:
         report["decoded_signals"] = decoded_signals(args.input, args.ffprobe)
     if args.decode_check:
