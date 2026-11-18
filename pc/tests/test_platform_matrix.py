@@ -32,3 +32,12 @@ def test_matrix_refuses_existing_folder(tmp_path):
     source.touch()
     with pytest.raises(FileExistsError):
         platform_matrix.main([str(source), str(tmp_path), "--run"])
+
+
+def test_matrix_frozen_executable(monkeypatch, tmp_path):
+    import sys
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    name, command = platform_matrix.plan(tmp_path / "in.mp4", tmp_path / "out")[0]
+    assert command[:2] == [sys.executable, "export"]
+    assert command[2] == str((tmp_path / "in.mp4").resolve())
+    assert command[command.index("--preset") + 1] == "tiktok_hdr"
