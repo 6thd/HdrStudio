@@ -29,7 +29,7 @@ def test_real_hevc10_aac_and_remux(tmp_path, trc, expected):
            "-f", "lavfi", "-i", "sine=frequency=400:duration=0.5",
            "-map", "0:v:0", "-map", "1:a:0",
            "-c:v", "libx265", "-pix_fmt", "yuv420p10le",
-           "-x265-params", "log-level=error",
+           "-x265-params", "log-level=error:colorprim=9:transfer=%d:colormatrix=9" % (16 if expected == "PQ" else 18),
            "-color_primaries", "bt2020", "-color_trc", trc,
            "-colorspace", "bt2020nc", "-c:a", "aac", "-b:a", "64k",
            str(source)]
