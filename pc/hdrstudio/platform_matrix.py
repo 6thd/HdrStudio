@@ -12,7 +12,8 @@ def plan(source, folder):
     variants = [("pq", "tiktok_hdr", []), ("hlg", "tiktok_hlg", []),
                 ("sdr", "tiktok_sdr", []),
                 ("pq_plus", "tiktok_hdr", ["--set", "hdr10plus=true"])]
-    return [(name, [sys.executable, "-m", "hdrstudio", "export", source,
+    executable = [sys.executable, "export"] if getattr(sys, "frozen", False) else [sys.executable, "-m", "hdrstudio", "export"]
+    return [(name, [*executable, source,
                     "-o", str(folder / (name + ".mp4")), "--preset", preset,
                     "--quality", "off", "--resolution", "source",
                     "--fps", "source", *extra])
