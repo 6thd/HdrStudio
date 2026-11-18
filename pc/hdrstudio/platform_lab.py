@@ -175,11 +175,18 @@ def main(argv=None):
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     args = parser.parse_args(argv)
+    from . import mp4_tables
     report = {"boxes": inspect_boxes(args.input),
+              "sample_tables": mp4_tables.validate(args.input),
               "probe": probe(args.input, args.ffprobe)}
     report["hdr_signaling"] = hdr_signaling(report["probe"])
     if args.trace_headers:
         report["coded_headers"] = trace_headers(args.input, args.ffmpeg)
+        from . import hevc_sei
+        source_video = video_signals(report["probe"])
+        report["hevc_bitstream"] = (hevc_sei.inspect_hevc(args.input, args.ffmpeg)
+            if source_video and source_video[0]["codec_name"] == "hevc"
+            else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
     if args.frame_signals:
         report["decoded_signals"] = decoded_signals(args.input, args.ffprobe)
     if args.decode_check:
@@ -188,6 +195,12 @@ def main(argv=None):
         other = probe(args.compare, args.ffprobe)
         report["comparison"] = compare(report["probe"], other)
         report["comparison"]["after_hdr_signaling"] = hdr_signaling(other)
+        report["comparison"]["after_sample_tables"] = mp4_tables.validate(args.compare)
+        if args.trace_headers:
+            other_video = video_signals(other)
+            report["comparison"]["after_bitstream"] = (hevc_sei.inspect_hevc(args.compare, args.ffmpeg)
+                if other_video and other_video[0]["codec_name"] == "hevc"
+                else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
     if args.remux:
         report["remux"] = remux(args.input, args.remux, args.ffmpeg, args.ffprobe)
     print(json.dumps(report, indent=2, ensure_ascii=True))
