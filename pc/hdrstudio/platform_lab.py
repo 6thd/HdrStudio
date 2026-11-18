@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import struct
 import subprocess
+import tempfile
+import hashlib
 
 
 def inspect_boxes(path):
@@ -63,16 +65,62 @@ def compare(before, after):
             "hdr_preservation": "NOT_VERIFIED"}
 
 
+def packet_digest(path, ffprobe="ffprobe"):
+    """Hash ordered packet payload hashes for every stream; bounded output memory."""
+    cmd = [ffprobe, "-v", "error", "-show_packets", "-show_data_hash", "sha256",
+           "-show_entries", "packet=stream_index,data_hash", "-of", "compact=p=0",
+           str(Path(path).resolve())]
+    hashes = {}
+    with tempfile.TemporaryFile() as output:
+        subprocess.run(cmd, stdout=output, check=True, timeout=600)
+        output.seek(0)
+        for line in output:
+            fields = dict(part.split(b"=", 1) for part in line.strip().split(b"|") if b"=" in part)
+            index, digest = fields.get(b"stream_index"), fields.get(b"data_hash")
+            if index is None or digest is None:
+                raise ValueError("missing packet hash")
+            hashes.setdefault(index, hashlib.sha256()).update(digest + b"\n")
+    if not hashes:
+        raise ValueError("no packets")
+    return {k.decode(): v.hexdigest() for k, v in hashes.items()}
+
+
+def remux(source, destination, ffmpeg="ffmpeg", ffprobe="ffprobe"):
+    """Standard stream copy; publish only after packet payload verification."""
+    source, destination = Path(source).resolve(), Path(destination).resolve()
+    if destination.exists() or source == destination:
+        raise FileExistsError(destination)
+    if destination.suffix.lower() != ".mp4":
+        raise ValueError("destination must be MP4")
+    with tempfile.TemporaryDirectory(dir=destination.parent) as folder:
+        candidate = Path(folder) / "output.mp4"
+        subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-n", "-i", str(source),
+                        "-map", "0", "-c", "copy", "-movflags", "+faststart",
+                        str(candidate)], check=True, timeout=600)
+        inspect_boxes(candidate)
+        if packet_digest(source, ffprobe) != packet_digest(candidate, ffprobe):
+            raise ValueError("packet payloads changed")
+        # Exclusive creation prevents overwriting an existing file.
+        import os
+        os.link(candidate, destination)
+    return {"packet_payloads_equal": True, "output": str(destination),
+            "hdr_preservation": "NOT_VERIFIED"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("--compare")
+    parser.add_argument("--remux", help="standard lossless MP4 copy")
+    parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     args = parser.parse_args(argv)
     report = {"boxes": inspect_boxes(args.input),
               "probe": probe(args.input, args.ffprobe)}
     if args.compare:
         report["comparison"] = compare(report["probe"], probe(args.compare, args.ffprobe))
+    if args.remux:
+        report["remux"] = remux(args.input, args.remux, args.ffmpeg, args.ffprobe)
     print(json.dumps(report, indent=2, ensure_ascii=True))
     return 0
 
