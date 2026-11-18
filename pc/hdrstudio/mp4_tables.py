@@ -106,8 +106,6 @@ def _compact_sizes(data):
         raise TableError("stz2 length mismatch")
     raw = data[12:]
     if field == 4:
-        sizes = [((byte >> 4) if i % 2 == 0 else (byte & 15))
-                 for i, byte in enumerate(raw) for _ in (0, 1)][:count]
         # Expand nibbles in on-disk order.
         sizes = [raw[i // 2] >> 4 if i % 2 == 0 else raw[i // 2] & 15 for i in range(count)]
     elif field == 8:
@@ -144,6 +142,10 @@ def validate(path):
             if (sz is None) == (z2 is None):
                 raise TableError("exactly one stsz/stz2 required")
             n, sizes = _sizes(sz) if sz is not None else _compact_sizes(z2)
+            stsd = _table(file, bounds, b"stsd")
+            if len(stsd) < 8 or _u32(stsd, 4) < 1:
+                raise TableError("missing sample descriptions")
+            descriptions = _u32(stsd, 4)
             sc = _table(file, bounds, b"stsc")
             nsc = _entries(sc, 12)
             mapping = [struct.unpack_from(">III", sc, 8 + 12*i) for i in range(nsc)]
@@ -152,7 +154,7 @@ def validate(path):
             if any(a >= b or spc < 1 or desc < 1 for (a, _, _), (b, spc, desc)
                    in zip(mapping, mapping[1:])):
                 raise TableError("invalid stsc")
-            if any(spc < 1 or desc < 1 for _, spc, desc in mapping):
+            if any(spc < 1 or not 1 <= desc <= descriptions for _, spc, desc in mapping):
                 raise TableError("empty chunk description")
             co = _table(file, bounds, b"stco", False)
             c64 = _table(file, bounds, b"co64", False)
@@ -161,6 +163,8 @@ def validate(path):
             offsets = _offsets(co if co is not None else c64, 4 if co is not None else 8)
             if n and not offsets:
                 raise TableError("samples without chunks")
+            if not n and offsets:
+                raise TableError("chunks without samples")
             if mapping[-1][0] > len(offsets) and offsets:
                 raise TableError("stsc beyond chunk table")
             stts = _table(file, bounds, b"stts")
