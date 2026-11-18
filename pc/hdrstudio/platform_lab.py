@@ -1,4 +1,4 @@
-"""Read-only platform diagnostics. No upload or container mutation."""
+"""Local platform diagnostics and standard stream-copy remux. No upload."""
 from __future__ import annotations
 
 import argparse
@@ -107,18 +107,48 @@ def remux(source, destination, ffmpeg="ffmpeg", ffprobe="ffprobe"):
             "hdr_preservation": "NOT_VERIFIED"}
 
 
+def decode_check(path, ffmpeg="ffmpeg"):
+    """Decode the entire video locally; not a platform acceptance test."""
+    subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-xerror",
+                    "-i", str(Path(path).resolve()), "-map", "0:v:0",
+                    "-f", "null", "-"], check=True, timeout=600)
+    return {"decode": "PASS", "platform_acceptance": "NOT_VERIFIED"}
+
+
+def hdr_signaling(report):
+    """Classify declared stream signals, not actual luminance or SEI validity."""
+    result = []
+    for stream in video_signals(report):
+        transfer = stream["color_transfer"]
+        wide = stream["color_primaries"] == "bt2020"
+        ten_bit = stream["pix_fmt"] in ("yuv420p10le", "yuv420p10be", "p010le", "p010be")
+        mode = "UNKNOWN"
+        if wide and ten_bit and transfer in ("smpte2084", "arib-std-b67"):
+            mode = "PQ" if transfer == "smpte2084" else "HLG"
+        elif transfer == "bt709":
+            mode = "SDR_SIGNAL"
+        result.append({"declared_mode": mode, "visual_hdr": "NOT_VERIFIED"})
+    return result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("--compare")
+    parser.add_argument("--decode-check", action="store_true")
     parser.add_argument("--remux", help="standard lossless MP4 copy")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     args = parser.parse_args(argv)
     report = {"boxes": inspect_boxes(args.input),
               "probe": probe(args.input, args.ffprobe)}
+    report["hdr_signaling"] = hdr_signaling(report["probe"])
+    if args.decode_check:
+        report["decode_check"] = decode_check(args.input, args.ffmpeg)
     if args.compare:
-        report["comparison"] = compare(report["probe"], probe(args.compare, args.ffprobe))
+        other = probe(args.compare, args.ffprobe)
+        report["comparison"] = compare(report["probe"], other)
+        report["comparison"]["after_hdr_signaling"] = hdr_signaling(other)
     if args.remux:
         report["remux"] = remux(args.input, args.remux, args.ffmpeg, args.ffprobe)
     print(json.dumps(report, indent=2, ensure_ascii=True))
