@@ -175,6 +175,9 @@ def main(argv=None):
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
     args = parser.parse_args(argv)
+    from . import media
+    args.ffmpeg = media.ffmpeg() if args.ffmpeg == "ffmpeg" else args.ffmpeg
+    args.ffprobe = media.ffprobe() if args.ffprobe == "ffprobe" else args.ffprobe
     from . import mp4_tables
     report = {"boxes": inspect_boxes(args.input),
               "sample_tables": mp4_tables.validate(args.input),
