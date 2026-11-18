@@ -30,3 +30,21 @@ def test_compare_does_not_claim_hdr_preservation():
     assert compare(before, after)["signals_equal"] is False
     assert compare(before, before)["hdr_preservation"] == "NOT_VERIFIED"
     assert compare({}, {})["signals_equal"] is None
+
+
+def test_real_remux(tmp_path):
+    import shutil
+    import subprocess
+    from hdrstudio.platform_lab import remux, packet_digest
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg unavailable")
+    source, output = tmp_path / "source.mp4", tmp_path / "output.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "color=size=64x64:rate=10:duration=1", "-c:v", "mpeg4",
+                    str(source)], check=True)
+    assert remux(source, output)["packet_payloads_equal"]
+    assert packet_digest(source) == packet_digest(output)
+    with pytest.raises(FileExistsError):
+        remux(source, output)
+    with pytest.raises(FileExistsError):
+        remux(source, source)
