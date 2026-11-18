@@ -10,14 +10,14 @@ import subprocess
 import tempfile
 
 MAX_BYTES = 64 * 1024 * 1024
-START = re.compile(b"\\x00\\x00\\x00?\\x01")
+START = re.compile(b"\x00\x00\x00?\x01")
 
 
 def nal_units(payload):
     marks = list(START.finditer(payload))
     for i, match in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(payload)
-        nal = payload[match.end():end].rstrip(b"\\x00")
+        nal = payload[match.end():end].rstrip(b"\x00")
         if len(nal) >= 2:
             yield nal
 
@@ -40,7 +40,7 @@ def parse_sei(data):
     pos = 0
     events = []
     while pos < len(rbsp):
-        if rbsp[pos:] in (b"\\x80", b""):
+        if rbsp[pos:] in (b"\x80", b""):
             break
         kind = length = 0
         while pos < len(rbsp) and rbsp[pos] == 255:
@@ -67,7 +67,7 @@ def parse_sei(data):
             events.append({"type": "content_light_level",
                            "max_cll": int.from_bytes(body[:2], "big"),
                            "max_fall": int.from_bytes(body[2:4], "big")})
-        elif kind == 4 and len(body) >= 3 and body[:3] == b"\\xb5\\x00\\x3c":
+        elif kind == 4 and len(body) >= 3 and body[:3] == b"\xb5\x00\x3c":
             events.append({"type": "itu_t_t35_provider_0x003c",
                            "hdr10plus": "CANDIDATE_NOT_VALIDATED"})
         if len(events) > 4096:
