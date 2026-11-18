@@ -22,9 +22,36 @@ def _u32(data, offset=0):
     return struct.unpack_from(">I", data, offset)[0]
 
 
+MAX_BOXES = 100_000
+# Box types an ISO BMFF / QuickTime file may start with; anything else is another container.
+FIRST_BOXES = {b"ftyp", b"styp", b"moov", b"mdat", b"free", b"skip", b"wide", b"pdin", b"uuid", b"sidx", b"pnot"}
+
+
+def is_iso_bmff(path):
+    with Path(path).open("rb") as file:
+        head = file.read(8)
+    return len(head) == 8 and head[4:8] in FIRST_BOXES
+
+
+def top_level_boxes(path):
+    """Top-level box list (type, offset, size). Raises TableError on a bad boundary."""
+    size = Path(path).stat().st_size
+    with Path(path).open("rb") as file:
+        return [{"type": typ.decode("latin-1"), "offset": at, "size": end - at}
+                for typ, at, _, end in _walk(file, 0, size)]
+
+
 def _boxes(file, start, stop):
-    at = start
+    for typ, _, body, end in _walk(file, start, stop):
+        yield typ, body, end
+
+
+def _walk(file, start, stop):
+    at, n = start, 0
     while at < stop:
+        n += 1
+        if n > MAX_BOXES:
+            raise TableError("too many boxes")
         if stop - at < 8:
             raise TableError("truncated box header")
         file.seek(at)
@@ -42,7 +69,7 @@ def _boxes(file, start, stop):
             head += 16
         if length < head or length > stop - at:
             raise TableError("invalid box boundary")
-        yield typ, at + head, at + length
+        yield typ, at, at + head, at + length
         at += length
 
 
@@ -149,7 +176,10 @@ def validate(path):
             sc = _table(file, bounds, b"stsc")
             nsc = _entries(sc, 12)
             mapping = [struct.unpack_from(">III", sc, 8 + 12*i) for i in range(nsc)]
-            if not mapping or mapping[0][0] != 1:
+            if not mapping:
+                if n:  # an empty track (no samples, no chunks) legitimately has no stsc entries
+                    raise TableError("samples without stsc entries")
+            elif mapping[0][0] != 1:
                 raise TableError("stsc must start at chunk 1")
             if any(a >= b or spc < 1 or desc < 1 for (a, _, _), (b, spc, desc)
                    in zip(mapping, mapping[1:])):
@@ -165,7 +195,7 @@ def validate(path):
                 raise TableError("samples without chunks")
             if not n and offsets:
                 raise TableError("chunks without samples")
-            if mapping[-1][0] > len(offsets) and offsets:
+            if mapping and offsets and mapping[-1][0] > len(offsets):
                 raise TableError("stsc beyond chunk table")
             stts = _table(file, bounds, b"stts")
             nt = _entries(stts, 8)

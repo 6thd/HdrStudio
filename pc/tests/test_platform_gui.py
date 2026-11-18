@@ -49,3 +49,10 @@ def test_lab_controls_exist_and_safe_text_render():
     assert 'id="labResult"' in html
     assert 'api("platform_lab"' in script
     assert 'out.textContent = JSON.stringify(result, null, 2)' in script
+
+
+def test_lab_compare_path_quotes_are_stripped():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert 'replace(/^"(.*)"$/, "$1")' in script
+    assert 'placeholder="C:\\Videos\\published.mp4"' in html

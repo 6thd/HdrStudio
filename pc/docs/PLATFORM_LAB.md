@@ -30,9 +30,20 @@ then run read-only analysis. Enabling the header trace runs bounded HEVC SEI ext
 - `trace_headers` uses FFmpeg's coded-header parser; `ffprobe` reports stream tags;
   decoder frame-signals report the first 32 packets. These are separate observations but
   not independent codec implementations.
-- `remux` uses FFmpeg stream-copy; it checks ordered packet payload SHA-256 per stream.
-  It does **not** establish timestamp, edit-list, audio synchronization, color metadata,
-  or hardware playback equivalence. The original source is never overwritten.
+- `remux` uses FFmpeg stream-copy of the streams MP4 can carry (video, audio, `mov_text`
+  subtitles); attached pictures, data tracks and other subtitle formats are listed under
+  `dropped`, never converted. Each kept stream is verified by ordered packet payload SHA-256
+  (`verified_by: packet_payload`); when the container must re-frame the bitstream (e.g. TS
+  Annex B H.264/HEVC or ADTS AAC into MP4) it is verified by a SHA-256 of the fully decoded
+  content instead (`decoded_content`). It does **not** establish timestamp, edit-list, audio
+  synchronization, color metadata, or hardware playback equivalence. The original source is
+  never overwritten; the output is published by hard link or, where the filesystem has none
+  (FAT32/exFAT, some shares), by exclusive-create copy.
+- The report is produced by one `platform_lab.analyze()` for both the CLI and the desktop
+  UI. `structure` is a result, never an abort: `PASS`, `FAIL` (with the table error),
+  `NOT_VERIFIED` (fragmented) or `NOT_APPLICABLE` (MKV, TS, WebM, AVI). `comparison.signals_equal`
+  compares only colour signalling (`pix_fmt`, primaries, transfer, matrix, range); size,
+  frame rate and bitrate differences are listed in `comparison.stream_changes`.
 - Matching metadata does NOT prove HDR image quality or playback on TikTok. For published
   files, label unsupported/missing evidence NOT_VERIFIED, not PASS.
 

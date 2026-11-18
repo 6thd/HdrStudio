@@ -56,6 +56,34 @@ def run(args, **kw):
     return subprocess.run(args, capture_output=True, creationflags=NO_WINDOW, **kw)
 
 
+class ToolError(RuntimeError):
+    """An FFmpeg/ffprobe run failed; the message carries the end of its stderr."""
+
+
+def run_checked(args, *, stdout=None, stderr=None, timeout=None):
+    """Run a tool with no console window. stdout/stderr may be open files (for large output);
+    stderr defaults to a temporary file so its size is bounded. Raises ToolError on failure."""
+    import tempfile
+    name = Path(str(args[0])).stem
+    with tempfile.TemporaryFile() as own:
+        err = own if stderr is None else stderr
+        start = err.tell()
+        try:
+            r = subprocess.run(args, stdout=subprocess.PIPE if stdout is None else stdout, stderr=err,
+                               creationflags=NO_WINDOW, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise ToolError(f"{name}: timed out after {timeout}s") from None
+        except OSError as e:
+            raise ToolError(f"{name}: {e}") from None
+        if r.returncode:
+            end = err.tell()
+            err.seek(max(start, end - 4096))
+            tail = err.read().decode("utf-8", "replace").strip().splitlines()[-5:]
+            err.seek(end)
+            raise ToolError(f"{name} failed (exit {r.returncode}): " + (" | ".join(tail) or "no error output"))
+        return r
+
+
 # ------------------------------------------------------------------ probe
 @dataclass
 class SourceInfo:

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-import subprocess
 import tempfile
 
 MAX_BYTES = 64 * 1024 * 1024
@@ -78,11 +77,13 @@ def parse_sei(data):
 def inspect_hevc(path, ffmpeg="ffmpeg", max_frames=8):
     if not 1 <= max_frames <= 16:
         raise ValueError("max_frames must be 1..16")
+    from .media import run_checked
+    # 0:V (capital) skips attached pictures such as cover art, matching video_signals().
     cmd = [ffmpeg, "-nostdin", "-v", "error", "-i", str(Path(path).resolve()),
-           "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+           "-map", "0:V:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
            "-frames:v", str(max_frames), "-f", "hevc", "-"]
     with tempfile.TemporaryFile() as stream:
-        subprocess.run(cmd, stdout=stream, check=True, timeout=120)
+        run_checked(cmd, stdout=stream, timeout=120)
         length = stream.tell()
         if length > MAX_BYTES:
             return {"status": "NOT_VERIFIED", "reason": "sample_exceeded_64MiB"}

@@ -69,35 +69,9 @@ class App:
 
     def platform_lab(self, q):
         """Read-only local diagnostics, called by the authenticated desktop UI."""
-        from . import mp4_tables, platform_lab
-        path = Path(q["path"]).resolve(strict=True)
-        if not path.is_file():
-            raise ValueError("source is not a file")
-        result = {"structure": mp4_tables.validate(path)}
-        original = platform_lab.probe(path, media.ffprobe())
-        result["source"] = platform_lab.video_signals(original)
-        result["hdr_signaling"] = platform_lab.hdr_signaling(original)
-        if q.get("trace"):
-            result["coded_headers"] = platform_lab.trace_headers(path, media.ffmpeg())
-            from . import hevc_sei
-            streams = platform_lab.video_signals(original)
-            result["hevc_bitstream"] = (hevc_sei.inspect_hevc(path, media.ffmpeg())
-                if streams and streams[0]["codec_name"] == "hevc"
-                else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
-        if q.get("compare"):
-            other = Path(q["compare"]).resolve(strict=True)
-            if not other.is_file():
-                raise ValueError("comparison is not a file")
-            report = platform_lab.probe(other, media.ffprobe())
-            result["comparison"] = platform_lab.compare(original, report)
-            result["comparison"]["after_hdr_signaling"] = platform_lab.hdr_signaling(report)
-            result["comparison"]["after_structure"] = mp4_tables.validate(other)
-            if q.get("trace"):
-                other_streams = platform_lab.video_signals(report)
-                result["comparison"]["after_bitstream"] = (hevc_sei.inspect_hevc(other, media.ffmpeg())
-                    if other_streams and other_streams[0]["codec_name"] == "hevc"
-                    else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
-        return result
+        from . import platform_lab
+        return platform_lab.analyze(q["path"], q.get("compare") or None, trace=bool(q.get("trace")),
+                                    frame_signals=True)
 
     def plan(self, q):
         s = Settings.from_dict(q["settings"])

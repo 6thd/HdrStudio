@@ -2,56 +2,72 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-from pathlib import Path
-import struct
+import os
+import shutil
 import subprocess
 import tempfile
-import hashlib
+from pathlib import Path
+
+from . import mp4_tables
+from .media import ToolError, run_checked
+
+# Fields that carry the colour/HDR signal; everything else (bitrate, size, fps, tag) is
+# expected to change on any platform re-encode and is reported separately.
+COLOR_FIELDS = ("pix_fmt", "color_primaries", "color_transfer", "color_space", "color_range")
+SIGNAL_FIELDS = ("codec_name", "profile", "codec_tag_string", "pix_fmt",
+                 "width", "height", "color_primaries", "color_transfer",
+                 "color_space", "color_range", "avg_frame_rate", "bit_rate")
+# Codecs the MP4 muxer can carry with stream copy. Anything else is dropped from a remux
+# and listed in the report, never converted (conversion would not be lossless).
+MP4_CODECS = {
+    "video": {"h264", "hevc", "av1", "vp9", "mpeg4", "mpeg2video", "mpeg1video"},
+    "audio": {"aac", "mp3", "mp2", "ac3", "eac3", "alac", "flac", "opus", "dts"},
+    "subtitle": {"mov_text"},
+}
+MAX_LISTED_BOXES = 64
+
+
+def _tools(ffmpeg=None, ffprobe=None):
+    from . import media
+    return ffmpeg or media.ffmpeg(), ffprobe or media.ffprobe()
+
+
+def _file(path):
+    path = Path(str(path).strip().strip('"')).resolve(strict=True)
+    if not path.is_file():
+        raise ValueError(f"not a file: {path}")
+    return path
 
 
 def inspect_boxes(path):
     """Validate top-level ISO BMFF box boundaries, not sample tables."""
-    size = Path(path).stat().st_size
-    boxes = []
-    with open(path, "rb") as stream:
-        offset = 0
-        while offset < size:
-            if size - offset < 8:
-                raise ValueError("truncated box header")
-            stream.seek(offset)
-            length, kind = struct.unpack(">I4s", stream.read(8))
-            header = 8
-            if length == 1:
-                if size - offset < 16:
-                    raise ValueError("truncated extended size")
-                length = struct.unpack(">Q", stream.read(8))[0]
-                header = 16
-            elif length == 0:
-                length = size - offset
-            if kind == b"uuid":
-                header += 16
-            if length < header or length > size - offset:
-                raise ValueError("invalid box boundary")
-            if len(boxes) >= 100000:
-                raise ValueError("too many boxes")
-            boxes.append({"type": kind.decode("latin-1"), "offset": offset, "size": length})
-            offset += length
-    return boxes
+    return mp4_tables.top_level_boxes(path)
+
+
+def structure(path):
+    """MP4 structure as a result, never an exception: PASS, FAIL, NOT_VERIFIED or NOT_APPLICABLE."""
+    if not mp4_tables.is_iso_bmff(path):
+        return {"status": "NOT_APPLICABLE", "reason": "not_iso_bmff_container"}
+    try:
+        boxes = mp4_tables.top_level_boxes(path)
+        result = mp4_tables.validate(path)
+    except mp4_tables.TableError as e:
+        return {"status": "FAIL", "error": str(e)}
+    result["boxes"] = boxes[:MAX_LISTED_BOXES]
+    result["box_count"] = len(boxes)
+    return result
 
 
 def probe(path, ffprobe="ffprobe"):
-    result = subprocess.run(
-        [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json",
-         str(Path(path).resolve())], capture_output=True, check=True, timeout=60)
+    result = run_checked([ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json",
+                          str(Path(path).resolve())], timeout=60)
     return json.loads(result.stdout)
 
 
 def video_signals(report):
-    fields = ("codec_name", "profile", "codec_tag_string", "pix_fmt",
-              "width", "height", "color_primaries", "color_transfer",
-              "color_space", "color_range", "avg_frame_rate", "bit_rate")
-    return [{key: stream.get(key) for key in fields}
+    return [{key: stream.get(key) for key in SIGNAL_FIELDS}
             for stream in report.get("streams", [])
             if stream.get("codec_type") == "video" and
             not stream.get("disposition", {}).get("attached_pic")]
@@ -60,9 +76,17 @@ def video_signals(report):
 def compare(before, after):
     """Report observed signals, never infer platform playback or HDR quality."""
     a, b = video_signals(before), video_signals(after)
-    return {"before": a, "after": b,
-            "signals_equal": a == b if a and b else None,
-            "hdr_preservation": "NOT_VERIFIED"}
+    colours = lambda streams: [tuple(s.get(k) for k in COLOR_FIELDS) for s in streams]
+    changes = [{k: [x.get(k), y.get(k)] for k in SIGNAL_FIELDS
+                if k not in COLOR_FIELDS and x.get(k) != y.get(k)} for x, y in zip(a, b)]
+    result = {"before": a, "after": b,
+              "signals_equal": colours(a) == colours(b) if a and b else None,
+              "signals_compared": list(COLOR_FIELDS),
+              "stream_changes": changes,
+              "hdr_preservation": "NOT_VERIFIED"}
+    if len(a) != len(b):
+        result["video_stream_count"] = [len(a), len(b)]
+    return result
 
 
 def packet_digest(path, ffprobe="ffprobe"):
@@ -72,7 +96,7 @@ def packet_digest(path, ffprobe="ffprobe"):
            str(Path(path).resolve())]
     hashes = {}
     with tempfile.TemporaryFile() as output:
-        subprocess.run(cmd, stdout=output, check=True, timeout=600)
+        run_checked(cmd, stdout=output, timeout=600)
         output.seek(0)
         for line in output:
             fields = dict(part.split(b"=", 1) for part in line.strip().split(b"|") if b"=" in part)
@@ -85,33 +109,98 @@ def packet_digest(path, ffprobe="ffprobe"):
     return {k.decode(): v.hexdigest() for k, v in hashes.items()}
 
 
+def decoded_digest(path, index, ffmpeg="ffmpeg"):
+    """SHA-256 of one stream's fully decoded frames/samples (container framing excluded)."""
+    result = run_checked([ffmpeg, "-nostdin", "-v", "error", "-i", str(Path(path).resolve()),
+                          "-map", f"0:{index}", "-f", "streamhash", "-hash", "sha256", "-"],
+                         timeout=3600)
+    line = result.stdout.decode("ascii", "replace").strip().splitlines()[-1:]
+    if not line or "SHA256=" not in line[0]:
+        raise ValueError("no decoded hash")
+    return line[0].split("SHA256=", 1)[1]
+
+
+def remux_plan(report):
+    """Choose the streams MP4 can carry by stream copy; list the rest with a reason."""
+    keep, dropped = [], []
+    for s in report.get("streams", []):
+        kind, codec = s.get("codec_type"), s.get("codec_name")
+        reason = None
+        if s.get("disposition", {}).get("attached_pic"):
+            reason = "attached_picture"
+        elif kind not in MP4_CODECS:
+            reason = f"{kind}_stream_not_carried"
+        elif codec not in MP4_CODECS[kind]:
+            reason = "codec_not_supported_in_mp4"
+        entry = {"index": s["index"], "codec_type": kind, "codec_name": codec}
+        (dropped if reason else keep).append({**entry, **({"reason": reason} if reason else {})})
+    if not any(s["codec_type"] in ("video", "audio") for s in keep):
+        raise ValueError("no audio or video stream that MP4 can carry by stream copy")
+    return keep, dropped
+
+
+def _publish(candidate, destination):
+    """Exclusive creation: never overwrite. Hard link when possible, else exclusive copy
+    (FAT32/exFAT and some network shares have no hard links)."""
+    try:
+        os.link(candidate, destination)
+        return
+    except FileExistsError:
+        raise
+    except OSError:
+        pass
+    with open(candidate, "rb") as src, open(destination, "xb") as dst:
+        try:
+            shutil.copyfileobj(src, dst, 1 << 20)
+        except BaseException:
+            dst.close()
+            Path(destination).unlink(missing_ok=True)
+            raise
+
+
 def remux(source, destination, ffmpeg="ffmpeg", ffprobe="ffprobe"):
-    """Standard stream copy; publish only after packet payload verification."""
+    """Standard stream copy of the MP4-compatible streams; publish only after every kept
+    stream is verified identical (packet payloads, or decoded content when the container
+    must re-frame the bitstream, e.g. TS Annex B / ADTS into MP4)."""
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if destination.exists() or source == destination:
         raise FileExistsError(destination)
     if destination.suffix.lower() != ".mp4":
         raise ValueError("destination must be MP4")
+    keep, dropped = remux_plan(probe(source, ffprobe))
+    maps = [arg for s in keep for arg in ("-map", f"0:{s['index']}")]
     with tempfile.TemporaryDirectory(dir=destination.parent) as folder:
         candidate = Path(folder) / "output.mp4"
-        subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-n", "-i", str(source),
-                        "-map", "0", "-c", "copy", "-movflags", "+faststart",
-                        str(candidate)], check=True, timeout=600)
-        inspect_boxes(candidate)
-        if packet_digest(source, ffprobe) != packet_digest(candidate, ffprobe):
-            raise ValueError("packet payloads changed")
-        # Exclusive creation prevents overwriting an existing file.
-        import os
-        os.link(candidate, destination)
-    return {"packet_payloads_equal": True, "output": str(destination),
-            "hdr_preservation": "NOT_VERIFIED"}
+        run_checked([ffmpeg, "-nostdin", "-v", "error", "-n", "-i", str(source), *maps,
+                     "-c", "copy", "-movflags", "+faststart", str(candidate)], timeout=600)
+        mp4_tables.top_level_boxes(candidate)
+        before, after = packet_digest(source, ffprobe), packet_digest(candidate, ffprobe)
+        streams = []
+        for out_index, s in enumerate(keep):
+            entry = {"source_index": s["index"], "output_index": out_index,
+                     "codec_type": s["codec_type"], "codec_name": s["codec_name"]}
+            if before.get(str(s["index"])) == after.get(str(out_index)):
+                entry["verified_by"] = "packet_payload"
+            elif s["codec_type"] in ("video", "audio") and \
+                    decoded_digest(source, s["index"], ffmpeg) == decoded_digest(candidate, out_index, ffmpeg):
+                entry["verified_by"] = "decoded_content"
+            else:
+                raise ValueError(f"stream {s['index']} ({s['codec_name']}) changed in remux")
+            streams.append(entry)
+        _publish(candidate, destination)
+    return {"packet_payloads_equal": all(s["verified_by"] == "packet_payload" for s in streams),
+            "content_equal": True, "streams": streams, "dropped": dropped,
+            "output": str(destination), "hdr_preservation": "NOT_VERIFIED"}
 
 
 def decode_check(path, ffmpeg="ffmpeg"):
     """Decode the entire video locally; not a platform acceptance test."""
-    subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-xerror",
-                    "-i", str(Path(path).resolve()), "-map", "0:v:0",
-                    "-f", "null", "-"], check=True, timeout=600)
+    try:
+        run_checked([ffmpeg, "-nostdin", "-v", "error", "-xerror",
+                     "-i", str(Path(path).resolve()), "-map", "0:V:0",
+                     "-f", "null", "-"], timeout=600)
+    except ToolError as e:
+        return {"decode": "FAIL", "error": str(e), "platform_acceptance": "NOT_VERIFIED"}
     return {"decode": "PASS", "platform_acceptance": "NOT_VERIFIED"}
 
 
@@ -133,12 +222,11 @@ def hdr_signaling(report):
 
 def decoded_signals(path, ffprobe="ffprobe"):
     """Read decoder-reported frame properties separately from stream declarations."""
-    cmd = [ffprobe, "-v", "error", "-select_streams", "v:0",
+    cmd = [ffprobe, "-v", "error", "-select_streams", "V:0",
            "-read_intervals", "%+#32", "-show_frames",
            "-show_entries", "frame=pix_fmt,color_space,color_primaries,color_transfer,side_data_list",
            "-of", "json", str(Path(path).resolve())]
-    result = subprocess.run(cmd, capture_output=True, check=True, timeout=60)
-    frames = json.loads(result.stdout).get("frames", [])
+    frames = json.loads(run_checked(cmd, timeout=60).stdout).get("frames", [])
     return {"frames": frames, "scope": "first 32 packets only",
             "independent_bitstream_validation": "NOT_VERIFIED"}
 
@@ -146,13 +234,13 @@ def decoded_signals(path, ffprobe="ffprobe"):
 def trace_headers(path, ffmpeg="ffmpeg"):
     """Inspect coded headers via FFmpeg trace_headers, without rewriting input."""
     cmd = [ffmpeg, "-nostdin", "-v", "info", "-i", str(Path(path).resolve()),
-           "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "trace_headers",
+           "-map", "0:V:0", "-c:v", "copy", "-bsf:v", "trace_headers",
            "-frames:v", "1", "-f", "null", "-"]
     keys = ("colour_primaries", "transfer_characteristics", "matrix_coefficients",
             "bit_depth_luma_minus8", "bit_depth_chroma_minus8")
     observed = []
     with tempfile.TemporaryFile() as log:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=log, check=True, timeout=60)
+        run_checked(cmd, stdout=subprocess.DEVNULL, stderr=log, timeout=60)
         log.seek(0)
         for line in log:
             if b"trace_headers" in line and any(key.encode() in line for key in keys):
@@ -164,6 +252,49 @@ def trace_headers(path, ffmpeg="ffmpeg"):
             "full_stream_hdr_validation": "NOT_VERIFIED"}
 
 
+def _section(fn, *args):
+    """One failing optional check is recorded, not allowed to sink the whole report."""
+    try:
+        return fn(*args)
+    except (ToolError, ValueError) as e:
+        return {"status": "ERROR", "error": str(e)}
+
+
+def _hevc_bitstream(path, streams, ffmpeg):
+    if not streams or streams[0]["codec_name"] != "hevc":
+        return {"status": "NOT_VERIFIED", "reason": "not_hevc"}
+    from . import hevc_sei
+    return _section(hevc_sei.inspect_hevc, path, ffmpeg)
+
+
+def analyze(path, compare_path=None, *, trace=False, frame_signals=False, decode=False,
+            ffmpeg=None, ffprobe=None):
+    """The one Platform Lab report, shared by the desktop UI and the CLI."""
+    ffmpeg, ffprobe = _tools(ffmpeg, ffprobe)
+    path = _file(path)
+    original = probe(path, ffprobe)
+    streams = video_signals(original)
+    report = {"structure": structure(path), "source": streams,
+              "hdr_signaling": hdr_signaling(original)}
+    if trace:
+        report["coded_headers"] = _section(trace_headers, path, ffmpeg)
+        report["hevc_bitstream"] = _hevc_bitstream(path, streams, ffmpeg)
+    if frame_signals:
+        report["decoded_signals"] = _section(decoded_signals, path, ffprobe)
+    if decode:
+        report["decode_check"] = decode_check(path, ffmpeg)
+    if compare_path and str(compare_path).strip().strip('"'):
+        other_path = _file(compare_path)
+        other = probe(other_path, ffprobe)
+        comparison = compare(original, other)
+        comparison["after_hdr_signaling"] = hdr_signaling(other)
+        comparison["after_structure"] = structure(other_path)
+        if trace:
+            comparison["after_bitstream"] = _hevc_bitstream(other_path, video_signals(other), ffmpeg)
+        report["comparison"] = comparison
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
@@ -172,42 +303,22 @@ def main(argv=None):
     parser.add_argument("--frame-signals", action="store_true")
     parser.add_argument("--trace-headers", action="store_true")
     parser.add_argument("--remux", help="standard lossless MP4 copy")
-    parser.add_argument("--ffmpeg", default="ffmpeg")
-    parser.add_argument("--ffprobe", default="ffprobe")
+    parser.add_argument("--ffmpeg")
+    parser.add_argument("--ffprobe")
     args = parser.parse_args(argv)
-    from . import media
-    args.ffmpeg = media.ffmpeg() if args.ffmpeg == "ffmpeg" else args.ffmpeg
-    args.ffprobe = media.ffprobe() if args.ffprobe == "ffprobe" else args.ffprobe
-    from . import mp4_tables
-    report = {"boxes": inspect_boxes(args.input),
-              "sample_tables": mp4_tables.validate(args.input),
-              "probe": probe(args.input, args.ffprobe)}
-    report["hdr_signaling"] = hdr_signaling(report["probe"])
-    if args.trace_headers:
-        report["coded_headers"] = trace_headers(args.input, args.ffmpeg)
-        from . import hevc_sei
-        source_video = video_signals(report["probe"])
-        report["hevc_bitstream"] = (hevc_sei.inspect_hevc(args.input, args.ffmpeg)
-            if source_video and source_video[0]["codec_name"] == "hevc"
-            else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
-    if args.frame_signals:
-        report["decoded_signals"] = decoded_signals(args.input, args.ffprobe)
-    if args.decode_check:
-        report["decode_check"] = decode_check(args.input, args.ffmpeg)
-    if args.compare:
-        other = probe(args.compare, args.ffprobe)
-        report["comparison"] = compare(report["probe"], other)
-        report["comparison"]["after_hdr_signaling"] = hdr_signaling(other)
-        report["comparison"]["after_sample_tables"] = mp4_tables.validate(args.compare)
-        if args.trace_headers:
-            other_video = video_signals(other)
-            report["comparison"]["after_bitstream"] = (hevc_sei.inspect_hevc(args.compare, args.ffmpeg)
-                if other_video and other_video[0]["codec_name"] == "hevc"
-                else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
+    ffmpeg, ffprobe = _tools(args.ffmpeg, args.ffprobe)
+    report = analyze(args.input, args.compare, trace=args.trace_headers,
+                     frame_signals=args.frame_signals, decode=args.decode_check,
+                     ffmpeg=ffmpeg, ffprobe=ffprobe)
+    code = 0
     if args.remux:
-        report["remux"] = remux(args.input, args.remux, args.ffmpeg, args.ffprobe)
+        try:
+            report["remux"] = remux(args.input, args.remux, ffmpeg, ffprobe)
+        except (ToolError, ValueError, FileExistsError) as e:
+            report["remux"] = {"status": "FAIL", "error": str(e)}
+            code = 1
     print(json.dumps(report, indent=2, ensure_ascii=True))
-    return 0
+    return code
 
 
 if __name__ == "__main__":

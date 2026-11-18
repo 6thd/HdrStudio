@@ -382,7 +382,8 @@ async function boot() {
     try {
       const result = await api("platform_lab", {
         path,
-        compare: $("labCompare").value.trim(),
+        // Explorer's "Copy as path" wraps the path in double quotes.
+        compare: $("labCompare").value.trim().replace(/^"(.*)"$/, "$1").trim(),
         trace: $("labTrace").checked
       });
       out.textContent = JSON.stringify(result, null, 2);
