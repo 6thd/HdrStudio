@@ -67,6 +67,28 @@ class App:
         d["suggestedOutput"] = str(p.with_name(p.stem + "_HDRStudio.mp4"))
         return d
 
+    def platform_lab(self, q):
+        """Read-only local diagnostics, called by the authenticated desktop UI."""
+        from . import mp4_tables, platform_lab
+        path = Path(q["path"]).resolve(strict=True)
+        if not path.is_file():
+            raise ValueError("source is not a file")
+        result = {"structure": mp4_tables.validate(path)}
+        original = platform_lab.probe(path)
+        result["source"] = platform_lab.video_signals(original)
+        result["hdr_signaling"] = platform_lab.hdr_signaling(original)
+        if q.get("trace"):
+            result["coded_headers"] = platform_lab.trace_headers(path)
+        if q.get("compare"):
+            other = Path(q["compare"]).resolve(strict=True)
+            if not other.is_file():
+                raise ValueError("comparison is not a file")
+            report = platform_lab.probe(other)
+            result["comparison"] = platform_lab.compare(original, report)
+            result["comparison"]["after_hdr_signaling"] = platform_lab.hdr_signaling(report)
+            result["comparison"]["after_structure"] = mp4_tables.validate(other)
+        return result
+
     def plan(self, q):
         s = Settings.from_dict(q["settings"])
         si = media.probe(s.input)
@@ -158,7 +180,7 @@ class App:
 
 MAX_BODY = 1 << 20
 CSP = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-ROUTES = {"system", "pick", "probe", "plan", "preview", "prepare", "prepare_status", "export", "cancel", "status", "reveal"}
+ROUTES = {"system", "pick", "probe", "plan", "preview", "prepare", "prepare_status", "export", "cancel", "status", "reveal", "platform_lab"}
 
 
 def make_handler(app, token: str):
