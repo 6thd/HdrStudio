@@ -48,3 +48,18 @@ def test_real_remux(tmp_path):
         remux(source, output)
     with pytest.raises(FileExistsError):
         remux(source, source)
+
+
+@pytest.mark.parametrize("transfer,fmt,primaries,expected", [
+    ("arib-std-b67", "yuv420p10le", "bt2020", "HLG"),
+    ("smpte2084", "yuv420p10le", "bt2020", "PQ"),
+    ("smpte2084", "yuv420p", "bt2020", "UNKNOWN"),
+    ("arib-std-b67", "yuv420p10le", "bt709", "UNKNOWN"),
+    ("bt709", "yuv420p", "bt709", "SDR_SIGNAL"),
+])
+def test_hdr_signaling(transfer, fmt, primaries, expected):
+    from hdrstudio.platform_lab import hdr_signaling
+    report = {"streams": [{"codec_type": "video", "color_transfer": transfer,
+                           "pix_fmt": fmt, "color_primaries": primaries}]}
+    assert hdr_signaling(report) == [
+        {"declared_mode": expected, "visual_hdr": "NOT_VERIFIED"}]
