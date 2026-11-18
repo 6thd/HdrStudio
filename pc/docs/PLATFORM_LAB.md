@@ -32,7 +32,8 @@ then run read-only analysis. Enabling the header trace runs bounded HEVC SEI ext
   not independent codec implementations.
 - `remux` uses FFmpeg stream-copy of the streams MP4 can carry (video, audio, `mov_text`
   subtitles); attached pictures, data tracks and other subtitle formats are listed under
-  `dropped`, never converted. Each kept stream is verified by ordered packet payload SHA-256
+  `dropped`, never converted. A remux that would drop every video stream (e.g. FFV1) or
+  every audio stream (e.g. PCM) is refused and writes nothing. Each kept stream is verified by ordered packet payload SHA-256
   (`verified_by: packet_payload`); when the container must re-frame the bitstream (e.g. TS
   Annex B H.264/HEVC or ADTS AAC into MP4) it is verified by a SHA-256 of the fully decoded
   content instead (`decoded_content`). It does **not** establish timestamp, edit-list, audio
@@ -41,9 +42,12 @@ then run read-only analysis. Enabling the header trace runs bounded HEVC SEI ext
   (FAT32/exFAT, some shares), by exclusive-create copy.
 - The report is produced by one `platform_lab.analyze()` for both the CLI and the desktop
   UI. `structure` is a result, never an abort: `PASS`, `FAIL` (with the table error),
-  `NOT_VERIFIED` (fragmented) or `NOT_APPLICABLE` (MKV, TS, WebM, AVI). `comparison.signals_equal`
+  `NOT_VERIFIED` (fragmented) or `NOT_APPLICABLE` (MKV, TS, WebM, AVI). A comparison file that
+  is missing or unreadable gives `comparison.status: ERROR`; the source report is kept. `comparison.signals_equal`
   compares only colour signalling (`pix_fmt`, primaries, transfer, matrix, range); size,
   frame rate and bitrate differences are listed in `comparison.stream_changes`.
+  `signals_equal: true` means only those five fields match: it is not evidence that HDR10+
+  metadata or HDR image quality survived (`hdr_preservation` stays `NOT_VERIFIED`).
 - Matching metadata does NOT prove HDR image quality or playback on TikTok. For published
   files, label unsupported/missing evidence NOT_VERIFIED, not PASS.
 

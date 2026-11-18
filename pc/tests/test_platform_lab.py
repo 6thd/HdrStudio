@@ -183,3 +183,50 @@ def test_cover_art_is_not_taken_as_the_video(tmp_path):
     assert report["source"][0]["codec_name"] == "hevc"
     assert report["hevc_bitstream"]["status"] == "OBSERVED"
     assert report["decoded_signals"]["frames"]
+
+
+def _stream(index, kind, codec, attached=False):
+    return {"index": index, "codec_type": kind, "codec_name": codec,
+            "disposition": {"attached_pic": int(attached)}}
+
+
+@pytest.mark.parametrize("streams,lost", [
+    ([_stream(0, "video", "ffv1"), _stream(1, "audio", "aac")], "video"),
+    ([_stream(0, "video", "h264"), _stream(1, "audio", "pcm_s24le")], "audio"),
+])
+def test_remux_plan_refuses_to_drop_a_whole_kind(streams, lost):
+    with pytest.raises(ValueError, match="drop every " + lost):
+        _lab.remux_plan({"streams": streams})
+
+
+def test_remux_plan_cover_art_and_audio_only_are_fine():
+    keep, dropped = _lab.remux_plan({"streams": [
+        _stream(0, "video", "mjpeg", attached=True), _stream(1, "audio", "aac")]})
+    assert [s["index"] for s in keep] == [1]
+    assert dropped[0]["reason"] == "attached_picture"
+
+
+def test_remux_unsupported_video_writes_nothing(tmp_path):
+    _need_ffmpeg("ffv1")
+    mkv, out = tmp_path / "in.mkv", tmp_path / "out.mp4"
+    _ff("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=10:duration=1",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+        "-c:v", "ffv1", "-c:a", "aac", "-shortest", str(mkv))
+    with pytest.raises(ValueError, match="drop every video"):
+        _lab.remux(mkv, out)
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("broken", ["garbage", "missing"])
+def test_unreadable_comparison_keeps_the_source_report(tmp_path, broken):
+    _need_ffmpeg()
+    source, other = tmp_path / "in.mp4", tmp_path / "published.mp4"
+    _ff("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=10:duration=1", "-c:v", "mpeg4", str(source))
+    if broken == "garbage":
+        other.write_bytes(b"\x00not a video\xff" * 64)
+    report = _lab.analyze(source, other)
+    assert report["structure"]["status"] == "PASS"
+    assert report["source"][0]["codec_name"] == "mpeg4"
+    assert report["comparison"]["status"] == "ERROR"
+    assert report["comparison"]["error"]
+    assert report["comparison"]["hdr_preservation"] == "NOT_VERIFIED"

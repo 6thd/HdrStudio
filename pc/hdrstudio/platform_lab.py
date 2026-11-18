@@ -134,8 +134,15 @@ def remux_plan(report):
             reason = "codec_not_supported_in_mp4"
         entry = {"index": s["index"], "codec_type": kind, "codec_name": codec}
         (dropped if reason else keep).append({**entry, **({"reason": reason} if reason else {})})
-    if not any(s["codec_type"] in ("video", "audio") for s in keep):
-        raise ValueError("no audio or video stream that MP4 can carry by stream copy")
+    # Never report success for an output that lost a whole kind of content: a source with
+    # video must keep a video stream, and a source with audio must keep an audio stream.
+    for kind in ("video", "audio"):
+        lost = [d for d in dropped if d["codec_type"] == kind and d.get("reason") != "attached_picture"]
+        if lost and not any(s["codec_type"] == kind for s in keep):
+            codecs = ", ".join(sorted({d["codec_name"] or "unknown" for d in lost}))
+            raise ValueError(f"MP4 stream copy would drop every {kind} stream ({codecs})")
+    if not keep:
+        raise ValueError("no stream that MP4 can carry by stream copy")
     return keep, dropped
 
 
@@ -284,8 +291,15 @@ def analyze(path, compare_path=None, *, trace=False, frame_signals=False, decode
     if decode:
         report["decode_check"] = decode_check(path, ffmpeg)
     if compare_path and str(compare_path).strip().strip('"'):
-        other_path = _file(compare_path)
-        other = probe(other_path, ffprobe)
+        # The comparison file (often a downloaded platform copy) may be missing or unreadable;
+        # that must not discard the source report.
+        try:
+            other_path = _file(compare_path)
+            other = probe(other_path, ffprobe)
+        except (ToolError, ValueError, OSError) as e:
+            report["comparison"] = {"status": "ERROR", "error": str(e),
+                                    "hdr_preservation": "NOT_VERIFIED"}
+            return report
         comparison = compare(original, other)
         comparison["after_hdr_signaling"] = hdr_signaling(other)
         comparison["after_structure"] = structure(other_path)
