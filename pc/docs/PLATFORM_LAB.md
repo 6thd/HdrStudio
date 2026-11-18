@@ -1,25 +1,56 @@
-# Platform compatibility lab
+# Platform Compatibility & HDR Diagnostics (PC)
 
-Run locally from pc:
+All operations are local. No TikTok login, injection, upload manipulation or invalid MP4 generation.
 
-    python -m hdrstudio platform-lab source.mp4 --decode-check
+## Commands (run from pc)
+
+    python -m hdrstudio platform-lab source.mp4 --decode-check --frame-signals --trace-headers
     python -m hdrstudio platform-lab source.mp4 --compare published.mp4
     python -m hdrstudio platform-lab source.mp4 --remux clean.mp4
 
-Use only files you own or have permission to analyze. Upload through official platform interfaces. No platform validation bypass or malformed output is supported.
+    # Preview four existing export commands without creating files:
+    python -m hdrstudio platform-matrix source.mp4 ./trial
+    # Run on a SHORT, trusted video; creates a new folder:
+    python -m hdrstudio platform-matrix source.mp4 ./trial --run
 
-## Controlled experiment
+The desktop sidebar contains `Platform Lab`: select a video, optionally provide a second path,
+then run read-only analysis. Enabling the header trace runs bounded HEVC SEI extraction for HEVC videos.
 
-Use one short source, same resolution, frame rate, duration, quality and account/device. Disable AI for the initial format comparison. Export separately with the existing tiktok_hdr, tiktok_hlg and tiktok_sdr presets. For PQ only, repeat with hdr10plus=true. Keep all other settings fixed. Record exact settings and source hash. Upload manually and wait for processing. Record platform, client version, time and playback device. Obtain published files only through authorized means.
+## Interpreting evidence
 
-Compare source and published stream signals. Record missing files as NOT_VERIFIED. HDR signaling is not proof of visual HDR, platform acceptance, or original payload preservation. A platform may legitimately transcode an HDR file.
+- `inspect_boxes` validates top-level box lengths. `mp4_tables.validate` checks unfragmented
+  stsz/stz2, stsc, stco/co64, stts, optional ctts/stss, description references, sample counts,
+  and data offsets in mdat. It is NOT a complete ISO BMFF validator.
+- Fragmented MP4 (moof) is explicitly NOT_VERIFIED. Encrypted formats, timing edits and other
+  uncommon box types require further examination.
+- `hevc_sei` converts up to eight encoded frames to Annex B and parses NAL boundaries,
+  mastering-display SEI, content-light SEI, and *candidate* HDR10+ T.35 messages. This is an
+  independent Python envelope scan of the extracted bitstream, NOT SPS/VUI interpretation
+  or full-file HDR metadata validation. An absent SEI in the sample is not proof of absence.
+- `trace_headers` uses FFmpeg's coded-header parser; `ffprobe` reports stream tags;
+  decoder frame-signals report the first 32 packets. These are separate observations but
+  not independent codec implementations.
+- `remux` uses FFmpeg stream-copy; it checks ordered packet payload SHA-256 per stream.
+  It does **not** establish timestamp, edit-list, audio synchronization, color metadata,
+  or hardware playback equivalence. The original source is never overwritten.
+- Matching metadata does NOT prove HDR image quality or playback on TikTok. For published
+  files, label unsupported/missing evidence NOT_VERIFIED, not PASS.
 
-## Acceptance gates
+## Controlled format comparison
 
-- Unit tests and generated media fixture must pass on Windows.
-- Real PQ, HLG, SDR and audio-bearing remux fixtures must be tested.
-- Remux verifies ordered packet payload hashes, not timestamp equivalence, extradata or all metadata.
-- Box inspection validates top-level boundaries only; it is not a full ISO BMFF validator.
-- Independent elementary-stream HDR metadata verification, sample-table validation, automated export matrix and GUI remain pending.
-- Full decode checks only the first video stream and does not establish platform compatibility.
-- Do not claim TikTok HDR support until actual published output is verified.
+1. Select one SHORT source and record its SHA-256, settings, duration, frame rate and resolution.
+2. Run the controlled export matrix on the same source with quality off: PQ/HDR10, HLG, SDR,
+   and PQ/HDR10+. Do not call them four equivalent profiles; HDR10+ adds dynamic metadata.
+3. Run local container and bitstream diagnostics on each output.
+4. Upload manually through official platform interfaces. Record exact client version, device,
+   account, processing time and playback device. Obtain published files only with authorization.
+5. Compare the actual published outputs. Treat unavailable HDR playback evidence as NOT_VERIFIED.
+
+## Acceptance gates and exclusions
+
+- Windows Python 3.12/3.13/3.14 unit tests: consult the exact head's GitHub CI evidence.
+- Windows 3.12 must have FFmpeg installed for actual MP4 generation and remux tests.
+- Real PQ, HLG, SDR + audio-bearing remux, 4K long-run, GUI rendered interaction on Windows,
+  and TikTok/YouTube post-processing remain separate device/fixture acceptance gates until run.
+- This PR does not ship a new installer or release, and does not change Android/export shaders.
+- Do not merge until independent review and explicit owner approval.
