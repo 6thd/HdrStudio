@@ -131,11 +131,24 @@ def hdr_signaling(report):
     return result
 
 
+def decoded_signals(path, ffprobe="ffprobe"):
+    """Read decoder-reported frame properties separately from stream declarations."""
+    cmd = [ffprobe, "-v", "error", "-select_streams", "v:0",
+           "-read_intervals", "%+#32", "-show_frames",
+           "-show_entries", "frame=pix_fmt,color_space,color_primaries,color_transfer,side_data_list",
+           "-of", "json", str(Path(path).resolve())]
+    result = subprocess.run(cmd, capture_output=True, check=True, timeout=60)
+    frames = json.loads(result.stdout).get("frames", [])
+    return {"frames": frames, "scope": "first 32 packets only",
+            "independent_bitstream_validation": "NOT_VERIFIED"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("--compare")
     parser.add_argument("--decode-check", action="store_true")
+    parser.add_argument("--frame-signals", action="store_true")
     parser.add_argument("--remux", help="standard lossless MP4 copy")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--ffprobe", default="ffprobe")
@@ -143,6 +156,8 @@ def main(argv=None):
     report = {"boxes": inspect_boxes(args.input),
               "probe": probe(args.input, args.ffprobe)}
     report["hdr_signaling"] = hdr_signaling(report["probe"])
+    if args.frame_signals:
+        report["decoded_signals"] = decoded_signals(args.input, args.ffprobe)
     if args.decode_check:
         report["decode_check"] = decode_check(args.input, args.ffmpeg)
     if args.compare:
