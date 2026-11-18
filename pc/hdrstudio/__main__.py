@@ -23,6 +23,9 @@ def main(argv=None):
     if args[:1] == ["_pick"]:                     # internal: file dialog child process
         from .dialogs import child_main
         return child_main(args[1:4])
+    if args[:1] == ["platform-lab"]:
+        from .platform_lab import main as lab_main
+        return lab_main(args[1:])
     ap = argparse.ArgumentParser(prog="hdrstudio", description="HDR Studio — AI video enhancement and HDR10 export")
     sub = ap.add_subparsers(dest="cmd")
     g = sub.add_parser("gui", help="desktop app (default)")
