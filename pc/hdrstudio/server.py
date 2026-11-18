@@ -79,6 +79,11 @@ class App:
         result["hdr_signaling"] = platform_lab.hdr_signaling(original)
         if q.get("trace"):
             result["coded_headers"] = platform_lab.trace_headers(path)
+            from . import hevc_sei
+            streams = platform_lab.video_signals(original)
+            result["hevc_bitstream"] = (hevc_sei.inspect_hevc(path)
+                if streams and streams[0]["codec_name"] == "hevc"
+                else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
         if q.get("compare"):
             other = Path(q["compare"]).resolve(strict=True)
             if not other.is_file():
@@ -87,6 +92,11 @@ class App:
             result["comparison"] = platform_lab.compare(original, report)
             result["comparison"]["after_hdr_signaling"] = platform_lab.hdr_signaling(report)
             result["comparison"]["after_structure"] = mp4_tables.validate(other)
+            if q.get("trace"):
+                other_streams = platform_lab.video_signals(report)
+                result["comparison"]["after_bitstream"] = (hevc_sei.inspect_hevc(other)
+                    if other_streams and other_streams[0]["codec_name"] == "hevc"
+                    else {"status": "NOT_VERIFIED", "reason": "not_hevc"})
         return result
 
     def plan(self, q):
