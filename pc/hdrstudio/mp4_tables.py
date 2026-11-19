@@ -13,7 +13,11 @@ CONTAINERS = {b"moov", b"trak", b"mdia", b"minf", b"stbl"}
 
 
 class TableError(ValueError):
-    pass
+    """The tables are inconsistent: a real defect in the file."""
+
+
+class LimitError(TableError):
+    """The file is beyond this checker's bounds; says nothing about the file being wrong."""
 
 
 def _u32(data, offset=0):
@@ -51,7 +55,7 @@ def _walk(file, start, stop):
     while at < stop:
         n += 1
         if n > MAX_BOXES:
-            raise TableError("too many boxes")
+            raise LimitError("too many boxes")
         if stop - at < 8:
             raise TableError("truncated box header")
         file.seek(at)
@@ -91,7 +95,7 @@ def _table(file, bounds, name, required=True):
         raise TableError("expected one " + name.decode("ascii"))
     begin, end = matches[0]
     if end - begin > 12 + MAX_ENTRIES * 16:
-        raise TableError("table exceeds entry limit")
+        raise LimitError("table exceeds entry limit")
     file.seek(begin)
     return file.read(end - begin)
 
@@ -102,32 +106,39 @@ def _entries(data, stride):
     if len(data) < 8:
         raise TableError("short table")
     count = _u32(data, 4)
-    if count > MAX_ENTRIES or len(data) != 8 + stride * count:
+    if count > MAX_ENTRIES:
+        raise LimitError("table entry count exceeds limit")
+    if len(data) != 8 + stride * count:
         raise TableError("table entry count/length mismatch")
     return count
 
 
 def _sizes(data):
+    """(count, per-sample sizes or None, constant size). A constant-size stsz is 12 bytes
+    whatever its count (QuickTime LPCM has one sample per audio frame), so it has no limit
+    and its sizes are never materialised."""
     if data is None or len(data) < 12:
         raise TableError("missing stsz")
     uniform, count = _u32(data, 4), _u32(data, 8)
-    if count > MAX_ENTRIES:
-        raise TableError("too many samples")
     if uniform:
         if len(data) != 12:
             raise TableError("invalid constant stsz")
-        return count, [uniform] * count
+        return count, None, uniform
+    if count > MAX_ENTRIES:
+        raise LimitError("too many samples")
     if len(data) != 12 + 4 * count:
         raise TableError("stsz length mismatch")
-    return count, list(struct.unpack_from(">" + "I" * count, data, 12)) if count else []
+    return count, list(struct.unpack_from(">" + "I" * count, data, 12)) if count else [], 0
 
 
 def _compact_sizes(data):
     if len(data) < 12:
         raise TableError("short stz2")
     field, count = data[7], _u32(data, 8)
-    if count > MAX_ENTRIES or field not in (4, 8, 16):
-        raise TableError("invalid stz2 field/count")
+    if field not in (4, 8, 16):
+        raise TableError("invalid stz2 field size")
+    if count > MAX_ENTRIES:
+        raise LimitError("too many samples")
     expected = 12 + (count * field + 7) // 8
     if len(data) != expected:
         raise TableError("stz2 length mismatch")
@@ -139,7 +150,7 @@ def _compact_sizes(data):
         sizes = list(raw)
     else:
         sizes = list(struct.unpack(">" + "H" * count, raw)) if count else []
-    return count, sizes
+    return count, sizes, 0
 
 
 def _offsets(data, width):
@@ -168,7 +179,7 @@ def validate(path):
             z2 = _table(file, bounds, b"stz2", False)
             if (sz is None) == (z2 is None):
                 raise TableError("exactly one stsz/stz2 required")
-            n, sizes = _sizes(sz) if sz is not None else _compact_sizes(z2)
+            n, sizes, uniform = _sizes(sz) if sz is not None else _compact_sizes(z2)
             stsd = _table(file, bounds, b"stsd")
             if len(stsd) < 8 or _u32(stsd, 4) < 1:
                 raise TableError("missing sample descriptions")
@@ -222,7 +233,7 @@ def validate(path):
                 take = mapping[run][1]
                 if cursor + take > n:
                     raise TableError("chunk/sample count mismatch")
-                end = offset + sum(sizes[cursor:cursor+take])
+                end = offset + (uniform * take if sizes is None else sum(sizes[cursor:cursor+take]))
                 if not any(start <= offset <= end <= stop for start, stop in mdat):
                     raise TableError("chunk references bytes outside mdat")
                 cursor += take

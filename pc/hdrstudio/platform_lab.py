@@ -53,6 +53,8 @@ def structure(path):
     try:
         boxes = mp4_tables.top_level_boxes(path)
         result = mp4_tables.validate(path)
+    except mp4_tables.LimitError as e:  # beyond the checker's bounds, not a defect in the file
+        return {"status": "NOT_VERIFIED", "reason": "checker_limit", "detail": str(e)}
     except mp4_tables.TableError as e:
         return {"status": "FAIL", "error": str(e)}
     result["boxes"] = boxes[:MAX_LISTED_BOXES]
@@ -176,6 +178,10 @@ def remux(source, destination, ffmpeg="ffmpeg", ffprobe="ffprobe"):
         raise ValueError("destination must be MP4")
     keep, dropped = remux_plan(probe(source, ffprobe))
     maps = [arg for s in keep for arg in ("-map", f"0:{s['index']}")]
+    # MKV/TS HEVC would be written as hev1, which QuickTime, iOS and Safari do not play;
+    # hvc1 matches the app's own exports and leaves the packet payloads unchanged.
+    maps += [arg for i, s in enumerate(keep) if s["codec_name"] == "hevc"
+             for arg in (f"-tag:{i}", "hvc1")]
     with tempfile.TemporaryDirectory(dir=destination.parent) as folder:
         candidate = Path(folder) / "output.mp4"
         run_checked([ffmpeg, "-nostdin", "-v", "error", "-n", "-i", str(source), *maps,

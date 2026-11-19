@@ -230,3 +230,36 @@ def test_unreadable_comparison_keeps_the_source_report(tmp_path, broken):
     assert report["comparison"]["status"] == "ERROR"
     assert report["comparison"]["error"]
     assert report["comparison"]["hdr_preservation"] == "NOT_VERIFIED"
+
+
+def test_long_pcm_mov_is_not_a_structure_failure(tmp_path):
+    """QuickTime LPCM has one sample per audio frame: 50 s at 48 kHz is 2.4M samples."""
+    _need_ffmpeg("libx264")
+    mov = tmp_path / "camera.mov"
+    _ff("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=10:duration=50",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=50:sample_rate=48000",
+        "-c:v", "libx264", "-c:a", "pcm_s16le", str(mov))
+    result = _lab.structure(mov)
+    assert result["status"] == "PASS"
+    assert max(t["samples"] for t in result["tracks"]) > 2_000_000
+
+
+def test_checker_limits_are_not_verified_not_fail(tmp_path, monkeypatch):
+    from hdrstudio import mp4_tables
+    _need_ffmpeg()
+    path = tmp_path / "in.mp4"
+    _ff("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=10:duration=1", "-c:v", "mpeg4", str(path))
+    monkeypatch.setattr(mp4_tables, "MAX_ENTRIES", 2)
+    result = _lab.structure(path)
+    assert result["status"] == "NOT_VERIFIED"
+    assert result["reason"] == "checker_limit"
+
+
+def test_remuxed_hevc_is_tagged_hvc1(tmp_path):
+    _need_ffmpeg("libx265")
+    mkv, out = tmp_path / "in.mkv", tmp_path / "out.mp4"
+    _ff("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=10:duration=1", "-c:v", "libx265",
+        "-x265-params", "log-level=error", str(mkv))
+    result = _lab.remux(mkv, out)
+    assert result["streams"][0]["verified_by"] == "packet_payload"
+    assert _lab.probe(out)["streams"][0]["codec_tag_string"] == "hvc1"
