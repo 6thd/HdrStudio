@@ -12,12 +12,15 @@ def box(tag, body=b""):
     return struct.pack(">I4s", len(body) + 8, tag) + body
 
 
-def sample_mp4(*, offset=8, size=4, time_count=1, first_chunk=1, fragmented=False, extra_trak=b""):
-    full = b"\x00" * 4
-    stsd = box(b"stsd", full + struct.pack(">I", 1) + box(b"avc1"))
+def sample_mp4(*, offset=8, size=4, time_count=1, first_chunk=1,
+               fragmented=False, extra_trak=b"", description_count=1,
+               sample_entries=(b"avc1",), description_index=1):
+    full = b"\\x00" * 4
+    stsd = box(b"stsd", full + struct.pack(">I", description_count) +
+               b"".join(box(kind) for kind in sample_entries))
     stsz = box(b"stsz", full + struct.pack(">II", size, 1))
     stsc = box(b"stsc", full + struct.pack(">I", 1) +
-               struct.pack(">III", first_chunk, 1, 1))
+               struct.pack(">III", first_chunk, 1, description_index))
     stco = box(b"stco", full + struct.pack(">II", 1, offset))
     stts = box(b"stts", full + struct.pack(">I", 1) +
                struct.pack(">II", time_count, 100))
@@ -74,3 +77,35 @@ def test_empty_track_is_valid(tmp_path):
     result = validate(path)
     assert result["status"] == "PASS"
     assert result["tracks"][-1] == {"track": 2, "samples": 0, "chunks": 0}
+
+
+# Codex P2: validate the physical sample entries, not just stsd.entry_count.
+def test_stsd_two_actual_entries_allow_second_description(tmp_path):
+    path = tmp_path / "two_descriptions.mp4"
+    path.write_bytes(sample_mp4(description_count=2,
+                                sample_entries=(b"avc1", b"hvc1"),
+                                description_index=2))
+    assert validate(path)["status"] == "PASS"
+
+
+@pytest.mark.parametrize("count,entries,reference", [
+    (2, (b"avc1",), 2),              # advertised second description is nonexistent
+    (2, (b"avc1",), 1),              # even a reference to entry 1 must not mask the bad stsd
+    (1, (b"avc1", b"hvc1"), 1),     # undeclared trailing sample entry
+])
+def test_stsd_declared_entries_must_match_physical_boxes(tmp_path, count, entries, reference):
+    path = tmp_path / "bad_stsd.mp4"
+    path.write_bytes(sample_mp4(description_count=count, sample_entries=entries,
+                                description_index=reference))
+    with pytest.raises(TableError, match="stsd entry count"):
+        validate(path)
+
+
+def test_stsd_sample_entry_box_must_be_complete(tmp_path):
+    path = tmp_path / "short_sample_entry.mp4"
+    data = bytearray(sample_mp4())
+    pos = data.index(b"avc1")
+    data[pos - 4:pos] = struct.pack(">I", 6)
+    path.write_bytes(data)
+    with pytest.raises(TableError, match="invalid box boundary"):
+        validate(path)
