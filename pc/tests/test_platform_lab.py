@@ -277,3 +277,28 @@ def test_streamhash_rejects_incomplete_hash():
     from hdrstudio.platform_lab import _parse_streamhash_sha256
     with pytest.raises(ValueError, match="no decoded SHA256 hash"):
         _parse_streamhash_sha256(b"0,v,sha256=0123\n")
+
+
+@pytest.mark.parametrize("algorithm", ["SHA256", "sha256"])
+def test_ffmpeg9_versioned_streamhash_format(algorithm):
+    from hdrstudio.platform_lab import _parse_streamhash_sha256
+    digest = "0123456789abcdef" * 4
+    output = (
+        "#format: stream checksums\n"
+        "#version: 2\n"
+        "#hash: " + algorithm + "\n"
+        "#software: Lavf63.16.100\n"
+        "#stream#, size, hash\n"
+        "0,       61440, " + digest.upper() + "\n"
+    ).encode("ascii")
+    assert _parse_streamhash_sha256(output) == digest
+
+
+@pytest.mark.parametrize("algorithm", ["MD5", "SHA224", ""])
+def test_ffmpeg9_hash_requires_confirmed_sha256(algorithm):
+    from hdrstudio.platform_lab import _parse_streamhash_sha256
+    digest = "0123456789abcdef" * 4
+    header = ("#hash: " + algorithm + "\n") if algorithm else ""
+    output = (header + "0, 61440, " + digest + "\n").encode("ascii")
+    with pytest.raises(ValueError, match="no decoded SHA256"):
+        _parse_streamhash_sha256(output)
