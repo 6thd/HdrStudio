@@ -6,6 +6,7 @@ Fragmented movies (moof) and QuickTime reference movies are not supported.
 from __future__ import annotations
 
 import struct
+from io import BytesIO
 from pathlib import Path
 
 MAX_ENTRIES = 2_000_000
@@ -153,6 +154,31 @@ def _compact_sizes(data):
     return count, sizes, 0
 
 
+
+
+def _sample_descriptions(data):
+    """Count complete, bounded stsd sample-entry boxes, not just the declared entry_count.
+
+    Entries are opaque here: this verifies their framing and number, without claiming
+    to validate every codec-specific sample-entry field.
+    """
+    if data is None or len(data) < 8:
+        raise TableError("missing sample descriptions")
+    declared = _u32(data, 4)
+    if not declared:
+        raise TableError("missing sample descriptions")
+    if declared > MAX_BOXES:
+        raise LimitError("sample descriptions exceed checker limit")
+    actual = 0
+    for _typ, _body, _end in _boxes(BytesIO(data), 8, len(data)):
+        actual += 1
+        if actual > declared:
+            raise TableError("stsd entry count does not match sample entries")
+    if actual != declared:
+        raise TableError("stsd entry count does not match sample entries")
+    return declared
+
+
 def _offsets(data, width):
     count = _entries(data, width)
     return [struct.unpack_from(">I" if width == 4 else ">Q", data, 8 + i * width)[0]
@@ -181,9 +207,7 @@ def validate(path):
                 raise TableError("exactly one stsz/stz2 required")
             n, sizes, uniform = _sizes(sz) if sz is not None else _compact_sizes(z2)
             stsd = _table(file, bounds, b"stsd")
-            if len(stsd) < 8 or _u32(stsd, 4) < 1:
-                raise TableError("missing sample descriptions")
-            descriptions = _u32(stsd, 4)
+            descriptions = _sample_descriptions(stsd)
             sc = _table(file, bounds, b"stsc")
             nsc = _entries(sc, 12)
             mapping = [struct.unpack_from(">III", sc, 8 + 12*i) for i in range(nsc)]
