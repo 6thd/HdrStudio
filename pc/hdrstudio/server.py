@@ -67,6 +67,12 @@ class App:
         d["suggestedOutput"] = str(p.with_name(p.stem + "_HDRStudio.mp4"))
         return d
 
+    def platform_lab(self, q):
+        """Read-only local diagnostics, called by the authenticated desktop UI."""
+        from . import platform_lab
+        return platform_lab.analyze(q["path"], q.get("compare") or None, trace=bool(q.get("trace")),
+                                    frame_signals=True)
+
     def plan(self, q):
         s = Settings.from_dict(q["settings"])
         si = media.probe(s.input)
@@ -158,7 +164,7 @@ class App:
 
 MAX_BODY = 1 << 20
 CSP = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-ROUTES = {"system", "pick", "probe", "plan", "preview", "prepare", "prepare_status", "export", "cancel", "status", "reveal"}
+ROUTES = {"system", "pick", "probe", "plan", "preview", "prepare", "prepare_status", "export", "cancel", "status", "reveal", "platform_lab"}
 
 
 def make_handler(app, token: str):

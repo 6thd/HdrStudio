@@ -222,3 +222,7 @@ details.sec > summary:hover { color: var(--text); }
 .kv b { overflow: visible; }
 
 .pane-note { flex: none; padding: 7px 12px; font-size: 12px; color: var(--accent); background: #2a201655; border-top: 1px solid var(--line); }
+
+/* Platform Lab: styles remain external to satisfy the local API CSP. */
+.lab-input { width: 100%; margin: 8px 0; }
+.lab-output { max-height: 260px; overflow: auto; white-space: pre-wrap; margin-top: 8px; }

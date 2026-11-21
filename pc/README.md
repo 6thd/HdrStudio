@@ -29,6 +29,18 @@
 
 **تشخيص الأداء:** `hdrstudio-cli diag --size 1080 -o report.json` يصف الجهاز (المعالج، البطاقات، OpenGL، خلفيات AI) ويشغّل تصديرات قصيرة موقوتة، ويفصل زمن كل مرحلة: فك الترميز، التنظيف، AI، توليد الإطارات، الترميز. أرفق ناتجه مع أي بلاغ عن بطء أو خطأ. ‏`--fps x2` يولّد إطارات بينية (30 ← 60). أي إعداد آخر عبر `--set`، مثل `--set sharpen=0.5`.
 
+**مختبر توافق المنصات (تجريبي، ضمن PR #8):** في الجانب الأيمن من الواجهة قسم `Platform Lab` لفحص MP4 والوسوم ومقارنة ملفين دون رفعهما. من سطر الأوامر:
+
+```
+python -m hdrstudio platform-lab in.mp4 --decode-check --trace-headers --frame-signals
+python -m hdrstudio platform-lab in.mp4 --compare published.mp4
+python -m hdrstudio platform-lab in.mp4 --remux repackaged.mp4
+python -m hdrstudio platform-matrix in.mp4 trial-dir
+python -m hdrstudio platform-matrix in.mp4 trial-dir --run
+```
+
+الأمر الأخير يشغّل أربع نسخ تجريبية (PQ، HLG، SDR، PQ+HDR10+) داخل مجلد جديد ويحتاج GPU؛ لا يرفع شيئاً إلى TikTok. فحص جداول العينات يدعم MP4 غير المجزأ، وفحص HEVC/SEI يفحص عينة محدودة فقط. الحفاظ الفعلي على HDR بعد النشر وقبول المنصة **غير مثبتين**. تفاصيل الحدود واختبارات القبول في [دليل المختبر](docs/PLATFORM_LAB.md).
+
 ## بناء المثبِّت
 
 ```

@@ -35,4 +35,11 @@ jobs:
       # ONNX conversions (Real-ESRGAN general against its reference vector, RIFE v4.6).
       # tests/test_export.py (real export, resume after kill) needs a GPU and FFmpeg and is
       # skipped here: run it locally before a release.
+      # Every Python version runs the FFmpeg-backed platform lab tests, not only 3.12.
+      - name: Ensure FFmpeg for platform lab
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          ffmpeg -version
+          ffprobe -version
       - run: python -m pytest tests -q

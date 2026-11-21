@@ -373,6 +373,26 @@ async function boot() {
   const move = (e) => { const r = cmp.getBoundingClientRect(); setSplit((e.clientX - r.left) / r.width); };
   cmp.onpointerdown = (e) => { if (!cmp.classList.contains("has")) return; cmp.setPointerCapture(e.pointerId); move(e); cmp.onpointermove = move; };
   cmp.onpointerup = cmp.onpointercancel = () => { cmp.onpointermove = null; };
+  $("labAnalyze").onclick = async () => {
+    const path = S.set.input;
+    if (!path) return toast("اختر فيديو أولاً");
+    const btn = $("labAnalyze"), out = $("labResult");
+    btn.disabled = true;
+    out.textContent = "جارٍ التحقق من الملف...";
+    try {
+      const result = await api("platform_lab", {
+        path,
+        // Explorer's "Copy as path" wraps the path in double quotes.
+        compare: $("labCompare").value.trim().replace(/^"(.*)"$/, "$1").trim(),
+        trace: $("labTrace").checked
+      });
+      out.textContent = JSON.stringify(result, null, 2);
+    } catch (e) {
+      out.textContent = "فشل الفحص: " + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
   $("exportBtn").onclick = startExport;
   $("cancelBtn").onclick = async () => { $("cancelBtn").disabled = true; await api("cancel"); };
   $("closeBtn").onclick = () => $("overlay").classList.add("hidden");

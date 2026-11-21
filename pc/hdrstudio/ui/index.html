@@ -150,6 +150,15 @@
       </div>
     </details>
     </div>
+    <details class="sec" id="platformLabSection">
+      <summary>فحص MP4 و HDR — Platform Lab</summary>
+      <p class="hint">فحص بنية الملف ووسوم الألوان ومقارنتها قبل النشر وبعده. لا يُعد هذا إثباتاً لدعم TikTok أو جودة HDR البصرية.</p>
+      <label class="row"><span>ملف للمقارنة (اختياري)</span></label>
+      <input id="labCompare" class="lab-input" dir="ltr" placeholder="C:\Videos\published.mp4" spellcheck="false">
+      <label class="check"><input type="checkbox" id="labTrace"><span>فحص رؤوس الترميز (قد يستغرق وقتاً)</span></label>
+      <button class="btn" id="labAnalyze" type="button">تحليل الفيديو المحدد</button>
+      <pre id="labResult" class="log lab-output" dir="ltr" aria-live="polite">اختر فيديو ثم اضغط تحليل.</pre>
+    </details>
   </aside>
 </main>
 
