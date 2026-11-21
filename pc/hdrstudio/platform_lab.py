@@ -120,12 +120,23 @@ def decoded_digest(path, index, ffmpeg="ffmpeg"):
 
 
 def _parse_streamhash_sha256(output):
-    """Accept FFmpeg's algorithm spelling independently of its letter case."""
-    for line in output.decode("ascii", "replace").splitlines():
-        field = line.strip().split(",")[-1]
-        algo, sep, digest = field.partition("=")
-        if (sep and algo.upper() == "SHA256" and len(digest) == 64
-                and all(c in "0123456789abcdefABCDEF" for c in digest)):
+    """Parse both legacy streamhash and FFmpeg 9 stream-checksum output formats."""
+    lines = output.decode("ascii", "replace").splitlines()
+    header_hash = next(
+        (line.partition(":")[2].strip().upper() for line in lines
+         if line.strip().lower().startswith("#hash:")), None)
+    for line in lines:
+        parts = [field.strip() for field in line.split(",")]
+        if len(parts) != 3 or not parts[0].isdigit():
+            continue
+        algo, sep, value = parts[2].partition("=")
+        if sep:
+            # FFmpeg <= 8: <index>,<type>,SHA256=<digest>
+            digest = value if algo.upper() == "SHA256" else ""
+        else:
+            # FFmpeg 9: #hash: SHA256 followed by <index>,<size>,<digest>
+            digest = parts[2] if header_hash == "SHA256" and parts[1].isdigit() else ""
+        if len(digest) == 64 and all(c in "0123456789abcdefABCDEF" for c in digest):
             return digest.lower()
     raise ValueError("no decoded SHA256 hash in streamhash output")
 
