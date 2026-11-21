@@ -15,7 +15,7 @@ def box(tag, body=b""):
 def sample_mp4(*, offset=8, size=4, time_count=1, first_chunk=1,
                fragmented=False, extra_trak=b"", description_count=1,
                sample_entries=(b"avc1",), description_index=1):
-    full = b"\\x00" * 4
+    full = b"\x00" * 4
     stsd = box(b"stsd", full + struct.pack(">I", description_count) +
                b"".join(box(kind) for kind in sample_entries))
     stsz = box(b"stsz", full + struct.pack(">II", size, 1))
