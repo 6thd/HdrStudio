@@ -116,10 +116,18 @@ def decoded_digest(path, index, ffmpeg="ffmpeg"):
     result = run_checked([ffmpeg, "-nostdin", "-v", "error", "-i", str(Path(path).resolve()),
                           "-map", f"0:{index}", "-f", "streamhash", "-hash", "sha256", "-"],
                          timeout=3600)
-    line = result.stdout.decode("ascii", "replace").strip().splitlines()[-1:]
-    if not line or "SHA256=" not in line[0]:
-        raise ValueError("no decoded hash")
-    return line[0].split("SHA256=", 1)[1]
+    return _parse_streamhash_sha256(result.stdout)
+
+
+def _parse_streamhash_sha256(output):
+    """Accept FFmpeg's algorithm spelling independently of its letter case."""
+    for line in output.decode("ascii", "replace").splitlines():
+        field = line.strip().split(",")[-1]
+        algo, sep, digest = field.partition("=")
+        if (sep and algo.upper() == "SHA256" and len(digest) == 64
+                and all(c in "0123456789abcdefABCDEF" for c in digest)):
+            return digest.lower()
+    raise ValueError("no decoded SHA256 hash in streamhash output")
 
 
 def remux_plan(report):
