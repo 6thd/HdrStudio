@@ -263,3 +263,17 @@ def test_remuxed_hevc_is_tagged_hvc1(tmp_path):
     result = _lab.remux(mkv, out)
     assert result["streams"][0]["verified_by"] == "packet_payload"
     assert _lab.probe(out)["streams"][0]["codec_tag_string"] == "hvc1"
+
+
+@pytest.mark.parametrize("algorithm", ["SHA256", "sha256", "Sha256"])
+def test_streamhash_algorithm_case_variants(algorithm):
+    from hdrstudio.platform_lab import _parse_streamhash_sha256
+    digest = "abcdef" * 10 + "abcd"
+    output = ("#format: streamhash\\n0,v," + algorithm + "=" + digest.upper() + "\\n").encode()
+    assert _parse_streamhash_sha256(output) == digest
+
+
+def test_streamhash_rejects_incomplete_hash():
+    from hdrstudio.platform_lab import _parse_streamhash_sha256
+    with pytest.raises(ValueError, match="no decoded SHA256 hash"):
+        _parse_streamhash_sha256(b"0,v,sha256=0123\\n")
