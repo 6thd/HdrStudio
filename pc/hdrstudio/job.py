@@ -236,7 +236,7 @@ class _Input:
                     "uWorkDomain": work_domain, "uHlgPeak": 1000.0}
 
     def load(self, planes):
-        for t, p in zip((self.y, self.u, self.v), planes):
+        for t, p in zip((self.y, self.u, self.v), planes, strict=True):
             t.t.write(p.tobytes(), alignment=1)
         self.k.run("input_planar.frag", self.out, self.uni)
         return self.out
@@ -416,8 +416,8 @@ class ExportJob:
                 old = json.loads(state_f.read_text("utf-8"))
                 if old.get("key") == key and all((jd / c["file"]).exists() for c in old["chunks"]):
                     st = old
-            except Exception:
-                pass
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                self.log(f"ملاحظة: حالة الاستئناف غير مقروءة ({type(e).__name__})، يبدأ التصدير من البداية")
         known = {c["file"] for c in st["chunks"]}
         for f in jd.glob("chunk_*"):
             if f.name not in known:         # partial chunk of an interrupted run
@@ -604,8 +604,10 @@ class ExportJob:
             old = json.loads(cache.read_text("utf-8"))
             if old.get("key") == key:
                 return old["meta"]
-        except Exception:
+        except FileNotFoundError:
             pass
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            self.log(f"ملاحظة: نتائج تحليل HDR10+ المحفوظة غير مقروءة ({type(e).__name__})، يُعاد التحليل")
         s, k = self.s, eng.k
         aw, ah = hdr10plus.analysis_size(pl.params.out_w, pl.params.out_h)
         ap = Params.from_dict({**pl.params.to_dict(), "out_w": aw, "out_h": ah, "ai": False, "temporal": False})

@@ -35,6 +35,7 @@ class ModelSpec:
     source: str        # file the ONNX graph is built from
     url: str | None
     note: str
+    sha256: str | None = None   # of the downloaded checkpoint; enforced before it is saved or used
 
     @property
     def onnx(self) -> Path:
@@ -51,10 +52,12 @@ REGISTRY = {
                          "سريع ومحافظ: يستعيد التفاصيل دون اختلاق قوام"),
     "x2plus": ModelSpec("x2plus", "Real-ESRGAN x2plus", 2, 192, 32, "RealESRGAN_x2plus.pth",
                         "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
-                        "جودة عالية للتكبير ×2 (1080p→4K)"),
+                        "جودة عالية للتكبير ×2 (1080p→4K)",
+                        "49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb"),
     "x4plus": ModelSpec("x4plus", "Real-ESRGAN x4plus", 4, 128, 32, "RealESRGAN_x4plus.pth",
                         "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-                        "أقصى تفاصيل، وأبطأ النماذج"),
+                        "أقصى تفاصيل، وأبطأ النماذج",
+                        "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"),
 }
 
 
@@ -62,6 +65,21 @@ REGISTRY = {
 class _Storage:
     def __init__(self, dtype, key):
         self.dtype, self.key = dtype, key
+
+
+def _check_view(n, offset, size, stride):
+    """as_strided does no bounds checking: a crafted checkpoint could otherwise read memory
+    outside the storage buffer. Every element the view addresses must lie inside it."""
+    size, stride = tuple(size), tuple(stride)
+    if not all(isinstance(v, int) for v in (offset, *size, *stride)) or len(size) != len(stride):
+        raise pickle.UnpicklingError("malformed tensor view")
+    if offset < 0 or any(v < 0 for v in size) or any(v < 0 for v in stride):
+        raise pickle.UnpicklingError("negative tensor view")
+    if 0 in size:
+        return
+    last = offset + sum((s - 1) * st for s, st in zip(size, stride, strict=True))
+    if last >= n:
+        raise pickle.UnpicklingError("tensor view exceeds its storage")
 
 
 def load_state_dict(path: Path) -> dict:
@@ -78,8 +96,11 @@ def load_state_dict(path: Path) -> dict:
             if mod == "torch._utils" and name == "_rebuild_tensor_v2":
                 def rebuild(storage, offset, size, stride, *a):
                     raw = np.frombuffer(z.read(prefix + "data/" + storage.key), storage.dtype)
+                    _check_view(raw.size, offset, size, stride)
                     if not size:
                         return raw[offset:offset + 1].reshape(())
+                    if 0 in size:
+                        return np.zeros(size, raw.dtype)
                     return np.lib.stride_tricks.as_strided(
                         raw[offset:], size, [s * raw.itemsize for s in stride]).copy()
                 return rebuild
@@ -229,15 +250,19 @@ def download(spec: ModelSpec, progress=None) -> Path:
         raise FileNotFoundError(f"ملف النموذج مفقود: {dst}")
     tmp = dst.with_suffix(dst.suffix + ".part")
     req = urllib.request.Request(spec.url, headers={"User-Agent": "HDRStudio"})
+    h = hashlib.sha256()
     with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
         total, got = int(r.headers.get("Content-Length") or 0), 0
         while True:
             chunk = r.read(1 << 18)
             if not chunk:
                 break
-            f.write(chunk); got += len(chunk)
+            f.write(chunk); h.update(chunk); got += len(chunk)
             if progress:
                 progress(got, total)
+    if spec.sha256 and h.hexdigest() != spec.sha256:
+        tmp.unlink()
+        raise IOError(f"بصمة الملف المنزَّل لا تطابق المنشورة ({spec.source}): لم يُحفظ")
     if not zipfile.is_zipfile(tmp):
         tmp.unlink()
         raise IOError("الملف المنزَّل ليس checkpoint صالحاً")
@@ -261,6 +286,8 @@ def ensure(model_id: str, progress=None, allow_download=True) -> ModelSpec:
         if not allow_download:
             raise FileNotFoundError(f"نموذج {spec.label} غير منزَّل")
         src = download(spec, progress)
+    if spec.sha256 and sha256(src) != spec.sha256:   # also covers a file placed or replaced by hand
+        raise IOError(f"بصمة {src.name} لا تطابق المنشورة: احذفه ليُنزَّل من جديد")
     if spec.id == "general":
         build_srvgg(src, spec.onnx, scale=spec.scale)
     else:
