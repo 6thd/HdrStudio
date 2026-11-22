@@ -176,8 +176,11 @@ def probe(path: str) -> SourceInfo:
                         si.max_cll = float(sd["max_content"])
                     if "max_luminance" in sd:
                         si.master_peak = float(Fraction(sd["max_luminance"]))
-        except Exception:
-            pass
+        except (ValueError, TypeError, ZeroDivisionError, KeyError, AttributeError) as e:
+            si.assumed.append(f"بيانات HDR الوصفية: تعذّرت قراءتها ({type(e).__name__})")
+        if not (si.max_cll or si.master_peak):
+            # the export maps the source as if it peaks at 1000 nit: say so, as for the other guesses
+            si.assumed.append("قمة سطوع المصدر: 1000 nit")
     return si
 
 

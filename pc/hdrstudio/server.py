@@ -24,6 +24,16 @@ from .job import PRESETS, QUALITY, Engine, ExportJob, Settings, estimate, plan, 
 
 UI = Path(__file__).parent / "ui"
 VIDEO_TYPES = [("Video", "*.mp4 *.mov *.mkv *.m4v *.webm *.avi *.ts *.mts")]
+VIDEO_EXT = {p[1:] for p in VIDEO_TYPES[0][1].split()}
+
+
+def video_file(path) -> str:
+    """An existing file with a video extension, else ValueError: the thumbnail endpoint
+    must not turn into a reader for arbitrary files."""
+    p = Path(str(path))
+    if p.suffix.lower() not in VIDEO_EXT or not p.is_file():
+        raise ValueError("ليس ملف فيديو")
+    return str(p)
 
 
 class App:
@@ -152,7 +162,9 @@ class App:
     def reveal(self, q):
         p = q.get("path", "")
         if os.path.exists(p):
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(p)])
+            # full path: a bare "explorer" is searched for in the current directory first
+            explorer = os.path.join(os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows", "explorer.exe")
+            subprocess.Popen([explorer, "/select,", os.path.normpath(p)])
         return {"ok": True}
 
 
@@ -210,7 +222,11 @@ def make_handler(app, token: str):
                     if u.path not in ("/api/thumb", "/api/live") or not self._authed(q.get("k")):
                         return self._send(403, b"{}")
                 if u.path == "/api/thumb":
-                    return self._send(200, media.thumbnail(q["path"], float(q.get("t", 0))), "image/jpeg")
+                    try:
+                        path = video_file(q.get("path", ""))
+                    except ValueError as e:
+                        return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
+                    return self._send(200, media.thumbnail(path, float(q.get("t", 0))), "image/jpeg")
                 if u.path == "/api/live":
                     j = app.job
                     return self._send(200, j.live, "image/jpeg") if j and j.live else self._send(404, b"")

@@ -111,7 +111,7 @@ class Accumulator:
 def build(stats: list, cuts: list) -> dict:
     """stats: FrameStats per source frame. cuts: True where a frame starts a new scene."""
     acc = Accumulator()
-    for f, c in zip(stats, cuts):
+    for f, c in zip(stats, cuts, strict=True):
         acc.add(f, c)
     return acc.finish()
 
