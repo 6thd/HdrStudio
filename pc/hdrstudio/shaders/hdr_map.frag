@@ -4,7 +4,10 @@
 //                  expansion above an adaptive knee, skin/midtone protection) -> peak soft-clip
 //                  that desaturates instead of clipping (no hue shift) -> PQ.
 //   SDR -> SDR   : identity transfer (no double EOTF/OETF) + optional vibrance.
-//   PQ  -> PQ    : identity (HDR source keeps its light levels).
+//   PQ  -> PQ    : identity below the declared peak (HDR source keeps its light levels). A source
+//                  mastered brighter than uPeak gets the BT.2390 EETF to uPeak; otherwise only a
+//                  narrow roll-off just under uPeak catches processing overshoot (sharpening and
+//                  AI detail on bright edges), so MaxCLL never exceeds the declared mastering peak.
 //   PQ  -> SDR   : BT.2390 EETF tone mapping on max(RGB) -> BT.709 gamut -> SDR OETF.
 // Output: non-linear code values in [0,1] (pre-dither); present.frag quantises them.
 uniform sampler2D uIn;
@@ -18,7 +21,7 @@ uniform float uExpand;     // 0..1 (already scene-adapted on the CPU)
 uniform float uKnee;       // relative linear SDR level where expansion starts
 uniform float uVibrance;   // -0.5..1
 uniform float uSkinProtect;// 0..1
-uniform float uSrcPeak;    // HDR source peak nits (for PQ -> SDR)
+uniform float uSrcPeak;    // HDR source peak nits (PQ -> SDR, and PQ -> PQ when above uPeak)
 uniform float uSdrPeakNits;// HDR nits that map to SDR 100% in PQ -> SDR
 out vec4 o;
 
@@ -38,6 +41,18 @@ vec3 vibrance(vec3 lin, vec3 lumaK, float amt, float skin) {
     float rmn = min(r.r, min(r.g, r.b));
     if (rmn < 0.0) r = y + (r - y) * (y / max(y - rmn, 1e-6));
     return r;
+}
+// Soft clip of max(RGB) to uPeak above kneeFrac * uPeak that desaturates towards the luminance
+// instead of clipping per channel (luminance and hue preserved).
+vec3 softClipPeak(vec3 nits, float kneeFrac) {
+    float m = max(nits.r, max(nits.g, nits.b));
+    float knee = kneeFrac * uPeak;
+    if (m > knee) {
+        float mc = knee + (uPeak - knee) * tanh((m - knee) / (uPeak - knee));
+        float yn = dot(nits, LUMA2020);
+        nits = yn >= mc ? vec3(mc) : yn + (nits - yn) * ((mc - yn) / (m - yn));
+    }
+    return nits;
 }
 // BT.2390 EETF on PQ values. srcPeak/dstPeak in nits, black assumed 0.
 float eetf(float nits, float srcPeak, float dstPeak) {
@@ -90,21 +105,23 @@ void main() {
         float extra = (uPeak - uRefWhite) * uExpand * t * t * (1.0 - uSkinProtect * skin);
         float gain = drive > 1e-5 ? (uRefWhite * drive + extra) / (uRefWhite * drive) : 1.0;
         vec3 nits = l2020 * uRefWhite * gain;
-        // peak soft-clip with chroma compression (luminance and hue preserved)
-        float m = max(nits.r, max(nits.g, nits.b));
-        float knee = 0.85 * uPeak;
-        if (m > knee) {
-            float mc = knee + (uPeak - knee) * tanh((m - knee) / (uPeak - knee));
-            float yn = dot(nits, LUMA2020);
-            nits = yn >= mc ? vec3(mc) : yn + (nits - yn) * ((mc - yn) / (m - yn));
-        }
+        nits = softClipPeak(nits, 0.85);
         o = vec4(pqEncode(max(nits, 0.0)), 1.0);
         return;
     }
     // HDR source (E_PQ)
-    if (uOutMode == 0) { o = vec4(clamp(e, 0.0, 1.0), 1.0); return; }
     vec3 nits = pqDecode(e);
     float m = max(nits.r, max(nits.g, nits.b));
+    if (uOutMode == 0) {
+        if (uSrcPeak > uPeak) {
+            // min(): values processing pushed past the source peak land exactly on uPeak.
+            if (m > 1e-4) nits *= eetf(min(m, uSrcPeak), uSrcPeak, uPeak) / m;
+        } else {
+            nits = softClipPeak(nits, 0.95);
+        }
+        o = vec4(pqEncode(max(nits, 0.0)), 1.0);
+        return;
+    }
     if (m > 1e-4) nits *= eetf(m, uSrcPeak, uSdrPeakNits) / m;
     vec3 lin = desatToGamut(M2020_TO_709 * (nits / uSdrPeakNits));
     o = vec4(linearToSdr(lin, uSdrGamma), 1.0);
