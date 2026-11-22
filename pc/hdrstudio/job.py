@@ -336,6 +336,35 @@ def estimate(pl: Plan, sr) -> dict:
 
 
 # ------------------------------------------------------------------ export
+def read_cache(path: Path, key, log=None) -> dict | None:
+    """A job-folder cache (resume state, HDR10+ analysis) for this exact job, or None.
+    Anything unusable (missing, unreadable, damaged, not an object, other job) means "compute
+    again"; it must never fail the export. Damage is logged, a missing file is not."""
+    try:
+        old = json.loads(Path(path).read_text("utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        if log:
+            log(f"ملاحظة: {Path(path).name} غير مقروء ({type(e).__name__})، يُعاد الحساب")
+        return None
+    if not isinstance(old, dict):
+        if log:
+            log(f"ملاحظة: {Path(path).name} تالف، يُعاد الحساب")
+        return None
+    return old if old.get("key") == key else None
+
+
+def _valid_state(st: dict) -> bool:
+    """Resume state with every field the export reads later, of the right types."""
+    num = (int, float)
+    chunks = st.get("chunks")
+    return (isinstance(chunks, list) and isinstance(st.get("pipe"), dict)
+            and isinstance(st.get("maxCll"), num) and isinstance(st.get("maxFall"), num)
+            and all(isinstance(c, dict) and isinstance(c.get("file"), str) and "/" not in c["file"]
+                    and "\\" not in c["file"] and isinstance(c.get("frames"), int) for c in chunks))
+
+
 def _unlink(f: Path, tries=20):
     """A killed run's encoder may hold its chunk for a moment while it exits."""
     for i in range(tries):
@@ -411,13 +440,12 @@ class ExportJob:
         state_f = jd / "state.json"
         key = self._key(si, pl)
         st = {"key": key, "chunks": [], "maxCll": 0.0, "maxFall": 0.0, "pipe": {}}
-        if state_f.exists():
-            try:
-                old = json.loads(state_f.read_text("utf-8"))
-                if old.get("key") == key and all((jd / c["file"]).exists() for c in old["chunks"]):
-                    st = old
-            except (OSError, ValueError, KeyError, TypeError) as e:
-                self.log(f"ملاحظة: حالة الاستئناف غير مقروءة ({type(e).__name__})، يبدأ التصدير من البداية")
+        old = read_cache(state_f, key, self.log)
+        if old is not None:
+            if _valid_state(old) and all((jd / c["file"]).exists() for c in old["chunks"]):
+                st = old
+            else:
+                self.log("ملاحظة: حالة الاستئناف تالفة أو ناقصة، يبدأ التصدير من البداية")
         known = {c["file"] for c in st["chunks"]}
         for f in jd.glob("chunk_*"):
             if f.name not in known:         # partial chunk of an interrupted run
@@ -600,14 +628,9 @@ class ExportJob:
         """HDR10+ analysis pass (see hdr10plus.py): scene statistics of the whole clip, measured
         once without AI at reduced size and kept in the job folder for resumed runs."""
         cache = jd / "hdr10plus.json"
-        try:
-            old = json.loads(cache.read_text("utf-8"))
-            if old.get("key") == key:
-                return old["meta"]
-        except FileNotFoundError:
-            pass
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            self.log(f"ملاحظة: نتائج تحليل HDR10+ المحفوظة غير مقروءة ({type(e).__name__})، يُعاد التحليل")
+        old = read_cache(cache, key, self.log)
+        if old and "meta" in old:
+            return old["meta"]
         s, k = self.s, eng.k
         aw, ah = hdr10plus.analysis_size(pl.params.out_w, pl.params.out_h)
         ap = Params.from_dict({**pl.params.to_dict(), "out_w": aw, "out_h": ah, "ai": False, "temporal": False})

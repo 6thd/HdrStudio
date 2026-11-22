@@ -188,3 +188,40 @@ def test_declared_hdr_peak_is_not_an_assumption(monkeypatch, hlg_clip):
     _probe_hdr(monkeypatch, b'{"frames": [{"side_data_list": [{"max_content": 1200, "max_average": 300}]}]}')
     si = media.probe(str(hlg_clip))
     assert si.max_cll == 1200 and not any("قمة" in a for a in si.assumed)
+
+
+# ---------------------------------------------------------------- job-folder caches never fail an export
+@pytest.mark.parametrize("content,logged", [
+    (None, False),                 # missing file: silent
+    ("null", True), ("[]", True), ('"x"', True), ("{broken", True), (b"\xff\xfe", True),
+    ('{"key": "other job"}', False),
+])
+def test_unusable_job_cache_means_recompute(tmp_path, content, logged):
+    from hdrstudio.job import read_cache
+    path = tmp_path / "state.json"
+    if content is not None:
+        path.write_bytes(content if isinstance(content, bytes) else content.encode())
+    log = []
+    assert read_cache(path, "this job", log.append) is None
+    assert bool(log) == logged
+
+
+def test_matching_job_cache_is_used(tmp_path):
+    from hdrstudio.job import read_cache
+    path = tmp_path / "hdr10plus.json"
+    path.write_text('{"key": "k", "meta": {"scenes": []}}', encoding="utf-8")
+    assert read_cache(path, "k")["meta"] == {"scenes": []}
+
+
+@pytest.mark.parametrize("state,ok", [
+    ({"key": "k", "chunks": [{"file": "chunk_0001.mp4", "frames": 48}], "maxCll": 900.0, "maxFall": 120, "pipe": {}}, True),
+    ({"key": "k", "chunks": [], "maxCll": 0.0, "maxFall": 0.0, "pipe": {}}, True),
+    ({"key": "k", "chunks": None, "maxCll": 0.0, "maxFall": 0.0, "pipe": {}}, False),
+    ({"key": "k", "chunks": ["chunk_0001.mp4"], "maxCll": 0.0, "maxFall": 0.0, "pipe": {}}, False),
+    ({"key": "k", "chunks": [{"file": "..\\..\\x.mp4", "frames": 1}], "maxCll": 0.0, "maxFall": 0.0, "pipe": {}}, False),
+    ({"key": "k", "chunks": [], "maxFall": 0.0, "pipe": {}}, False),
+    ({"key": "k", "chunks": [], "maxCll": 0.0, "maxFall": 0.0, "pipe": None}, False),
+])
+def test_resume_state_shape_is_checked_before_use(state, ok):
+    from hdrstudio.job import _valid_state
+    assert _valid_state(state) is ok
